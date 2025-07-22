@@ -31,7 +31,7 @@ class BackLightsNode(Node):
         self.create_service(SwitchState, 'back_lights_get_switch_state', self.get_switch_state_handler)
         self.create_subscription(String, 'back_lights_cmd', self.cmd_callback, 10)
 
-        self.get_logger().info("BackLightsNode is running.")
+        self.get_logger().info("Back Lights Node is running.")
 
     def __write(self, text: str) -> None:
         self.ser.write(str.encode(text + "\n"))
@@ -44,43 +44,57 @@ class BackLightsNode(Node):
     def on_handler(self, request, response):
         self.__write("original")
         response.success = True
-        response.message = "Lights turned on"
+        message = "Lights turned on"
+        response.message = message
+        self.get_logger().info(message)
         return response
 
     def off_handler(self, request, response):
         self.__write("off")
         response.success = True
-        response.message = "Lights turned off"
+        message = "Lights turned off"
+        response.message = message
+        self.get_logger().info(message)
         return response
 
     def turn_on_handler(self, request, response):
         self.__sw_light("on", request.lights)
         response.success = True
-        response.message = "Lights turned on"
+        message = "Lights turned on"
+        response.message = message
+        self.get_logger().info(message)
         return response
 
     def turn_off_handler(self, request, response):
         self.__sw_light("off", request.lights)
         response.success = True
-        response.message = "Lights turned off"
+        message = "Lights turned off"
+        response.message = message
+        self.get_logger().info(message)
         return response
 
     def toggle_handler(self, request, response):
         self.__sw_light("toggle", request.lights)
         response.success = True
-        response.message = "Lights toggled"
+        message = "Lights toggled"
+        response.message = message
+        self.get_logger().info(message)
         return response
 
     def tv_on_handler(self, request, response):
         self.__write("tvon")
         response.success = True
-        response.message = "TV light on"
+        message = "Side screen on"
+        response.message = message
+        self.get_logger().info(message)
         return response
 
     def tv_off_handler(self, request, response):
         self.__write("tvoff")
         response.success = True
-        response.message = "TV light off"
+        message = "Side screen off"
+        response.message = message
+        self.get_logger().info(message)
         return response
 
     def get_switch_state_handler(self, request, response):
@@ -89,7 +103,9 @@ class BackLightsNode(Node):
             lines = self.ser.readlines()
             if not lines:
                 response.success = False
-                response.message = "No response from device"
+                message = "No response from device"
+                response.message = message
+                self.get_logger().info(message)
                 response.states = []
                 return response
 
@@ -99,7 +115,10 @@ class BackLightsNode(Node):
             bool_list = [bool(x) for x in switchstate_list]
 
             response.success = True
-            response.message = "Switch states received"
+            message = "Switch states received"
+            response.message = message
+            self.get_logger().info(message)
+            self.get_logger().info("Switch states:", bool_list)
             response.states = bool_list
         except Exception as e:
             response.success = False

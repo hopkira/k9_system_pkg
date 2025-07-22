@@ -46,10 +46,10 @@ class K9TTSNode(Node):
         """Callback for the tts_input topic"""
         text = msg.data.strip()
         if not text:
+            self.get_logger().warn("Received empty text, ignoring.")
             return
-
-        # Simply add the text to the queue, without checking for '!!'
         self.text_queue.put(text)
+        self.get_logger().info(f"Received text for TTS: '{text}'")
 
     def process_queue(self):
         """Worker thread that processes the speech queue"""
@@ -98,6 +98,7 @@ class K9TTSNode(Node):
         if not text:
             response.success = False
             response.message = "Empty text"
+            self.get_logger().warn("Received empty text for speak_now service.")
             return response
 
         self.get_logger().info(f"Interrupt received via service: '{text}'")
@@ -115,6 +116,7 @@ class K9TTSNode(Node):
 
         response.success = True
         response.message = "Speech interrupt queued"
+        self.get_logger().info("Speech interrupt queued.")
         return response
 
     def cancel_speech_callback(self, request, response):

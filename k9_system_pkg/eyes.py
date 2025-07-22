@@ -38,6 +38,7 @@ class EyesServiceNode(Node):
     def __init__(self):
         super().__init__('eyes_service_node')
         self.eyes = Eyes()
+        self.get_logger().info("Eyes Node is running.")
 
         self._is_talking = False
         self._stored_level = 0.0  # Saved level before talking began
@@ -68,11 +69,15 @@ class EyesServiceNode(Node):
     def set_level_cb(self, request, response):
         if self._is_talking:
             response.success = False
-            response.message = "Ignored: eyes are in talking mode"
+            message = "Ignored: eyes are in talking mode"
+            response.message = message
+            self.get_logger().info(message)
             return response
         self.eyes.set_level(request.level)
         response.success = True
-        response.message = f"Brightness set to {request.level:.2f}"
+        message = f"Brightness set to {request.level:.2f}"
+        response.message = message
+        self.get_logger().info(message)
         return response
 
     def get_level_cb(self, request, response):
@@ -82,21 +87,29 @@ class EyesServiceNode(Node):
     def on_cb(self, request, response):
         if self._is_talking:
             response.success = False
-            response.message = "Ignored: eyes are in talking mode"
+            message = "Ignored: eyes are in talking mode"
+            response.message = message
+            self.get_logger().info(message)
             return response
         self.eyes.on()
         response.success = True
-        response.message = "Eyes turned on."
+        message = "Eyes turned on."
+        response.message = message
+        self.get_logger().info(message)
         return response
 
     def off_cb(self, request, response):
         if self._is_talking:
             response.success = False
-            response.message = "Ignored: eyes are in talking mode"
+            message = "Ignored: eyes are in talking mode"
+            response.message = message
+            self.get_logger().info(message)
             return response
         self.eyes.off()
         response.success = True
-        response.message = "Eyes turned off."
+        message = "Eyes turned off."
+        response.message = message
+        self.get_logger().info(message)
         return response
 
 

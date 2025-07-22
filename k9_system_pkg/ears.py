@@ -76,6 +76,7 @@ class EarsServiceNode(Node):
     def __init__(self):
         super().__init__('ears_service_node')
         self.ears = Ears()
+        self.get_logger().info("Ears Node is running.")
 
         # Register services
         self.create_service(Trigger, 'ears_stop', self.stop_cb)
@@ -89,45 +90,61 @@ class EarsServiceNode(Node):
     def stop_cb(self, request, response):
         self.ears.stop()
         response.success = True
-        response.message = "Stopped ears."
+        message = "Stopped ears."
+        response.message = message
+        self.get_logger().info(message)
         return response
 
     def scan_cb(self, request, response):
         self.ears.scan()
         response.success = True
-        response.message = "Started scan."
+        message = "Started scan."
+        response.message = message
+        self.get_logger().info(message)
         return response
 
     def fast_cb(self, request, response):
         self.ears.fast()
         response.success = True
-        response.message = "Set to fast mode."
+        message = "Set to fast mode."
+        response.message = message
+        self.get_logger().info(message)
         return response
 
     def think_cb(self, request, response):
         self.ears.think()
         response.success = True
-        response.message = "Set to think mode."
+        message = "Set to think mode."
+        response.message = message
+        self.get_logger().info(message)
         return response
 
     def follow_read_cb(self, request, response):
         try:
             dist = self.ears.follow_read()
             response.success = True
-            response.message = f"Distance: {dist:.2f} m"
+            message = f"Distance: {dist:.2f} m"
+            response.message = message
+            self.get_logger().info(message)
         except Exception as e:
             response.success = False
-            response.message = f"Error reading distance: {str(e)}"
+            message = f"Error reading distance: {str(e)}"
+            response.message = message
+            self.get_logger().info(message)
         return response
 
     def safe_rotate_cb(self, request, response):
         try:
             safe = self.ears.safe_rotate()
             response.success = safe
-            response.message = "Safe to rotate." if safe else "Obstacle detected."
+            message = "Safe to rotate." if safe else "Obstacle detected."
+            response.message = message
+            self.get_logger().info(message)
         except Exception as e:
             response.success = False
-            response.message = f"Error during rotation check: {str(e)}"
+            message = f"Error during rotation check: {str(e)}"
+            response.message = message
+            self.get_logger().info(message)
         return response
 
 
