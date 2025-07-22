@@ -14,7 +14,7 @@ class Tail:
         i2c = busio.I2C(board.SCL, board.SDA)
         self.pca = adafruit_pca9685.PCA9685(i2c)
         self.pca.frequency = 60
-        self.center()
+        self.centre()
 
     def wag_h(self):
         self.pca.channels[4].duty_cycle = 5121
@@ -34,7 +34,7 @@ class Tail:
             time.sleep(0.25)
         self.pca.channels[4].duty_cycle = 5121
 
-    def center(self):
+    def centre(self):
         self.pca.channels[4].duty_cycle = 5121
         self.pca.channels[5].duty_cycle = 5601
 
@@ -54,38 +54,49 @@ class TailServiceNode(Node):
 
         self.create_service(Trigger, 'tail_wag_h', self.wag_h_cb)
         self.create_service(Trigger, 'tail_wag_v', self.wag_v_cb)
-        self.create_service(Trigger, 'tail_center', self.center_cb)
+        self.create_service(Trigger, 'tail_centre', self.centre_cb)
         self.create_service(Trigger, 'tail_up', self.up_cb)
         self.create_service(Trigger, 'tail_down', self.down_cb)
+        self.get_logger().info('Tail node ready to wag!')
 
     def wag_h_cb(self, request, response):
         self.tail.wag_h()
         response.success = True
-        response.message = "Tail wagged horizontally."
+        message = "Tail wagged horizontally."
+        response.message = message
+        self.get_logger().info(message)
         return response
 
     def wag_v_cb(self, request, response):
         self.tail.wag_v()
         response.success = True
-        response.message = "Tail wagged vertically."
+        message = "Tail wagged vertically."
+        response.message = message
+        self.get_logger().info(message)
         return response
 
-    def center_cb(self, request, response):
-        self.tail.center()
+    def centre_cb(self, request, response):
+        self.tail.centre()
         response.success = True
-        response.message = "Tail centered."
+        message = "Tail centred."
+        response.message = message
+        self.get_logger().info(message)
         return response
 
     def up_cb(self, request, response):
         self.tail.up()
         response.success = True
-        response.message = "Tail raised."
+        message = "Tail raised."
+        response.message = message
+        self.get_logger().info(message)
         return response
 
     def down_cb(self, request, response):
         self.tail.down()
         response.success = True
-        response.message = "Tail lowered."
+        message = "Tail lowered."
+        response.message = message
+        self.get_logger().info(message)
         return response
 
 
