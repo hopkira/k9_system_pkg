@@ -58,12 +58,12 @@ class EyesServiceNode(Node):
             self._stored_level = self.eyes.get_level()
             self.eyes.on()
             self._is_talking = True
-            self.get_logger().info("Talking detected: eyes set to 100%")
+            self.get_logger().debug("Talking detected: eyes set to 100%")
         elif not msg.data and self._is_talking:
             # Stop talking: restore previous level
             self.eyes.set_level(self._stored_level)
             self._is_talking = False
-            self.get_logger().info(f"Stopped talking: eyes restored to {self._stored_level:.2f}")
+            self.get_logger().debug(f"Stopped talking: eyes restored to {self._stored_level:.2f}")
 
     # Service Callbacks
     def set_level_cb(self, request, response):

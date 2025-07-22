@@ -118,7 +118,7 @@ class BackLightsNode(Node):
             message = "Switch states received"
             response.message = message
             self.get_logger().info(message)
-            self.get_logger().info("Switch states:", bool_list)
+            self.get_logger().debug("Switch states:", bool_list)
             response.states = bool_list
         except Exception as e:
             response.success = False

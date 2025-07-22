@@ -90,7 +90,7 @@ class K9TTSNode(Node):
         msg = Bool()
         msg.data = is_talking
         self.publisher.publish(msg)
-        self.get_logger().info(f"Talking: {is_talking}")
+        self.get_logger().debug(f"Talking: {is_talking}")
 
     def speak_now_callback(self, request, response):
         """Service callback to interrupt and immediately speak"""
@@ -132,7 +132,9 @@ class K9TTSNode(Node):
                 except Empty:
                     break
         response.success = True
-        response.message = "Speech queue cleared and current speech interrupted."
+        message = "Speech queue cleared and current speech interrupted."
+        response.message = message
+        self.get_logger().info(message)
         return response
 
 def main(args=None):
