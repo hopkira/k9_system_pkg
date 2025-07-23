@@ -3,9 +3,9 @@
 <package format="3">
   <name>k9_system_pkg</name>
   <version>0.0.0</version>
-  <description>TODO: Package description</description>
+  <description>Collection of nodes for the K9 robot</description>
   <maintainer email="hopkira@googlemail.com">hopkira</maintainer>
-  <license>TODO: License declaration</license>
+  <license>Apache License</license>
 
   <depend>rclpy</depend>
   <depend>std_msgs</depend>
