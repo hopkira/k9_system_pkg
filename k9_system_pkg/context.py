@@ -136,3 +136,10 @@ class ContextAggregatorNode(Node):
             self.get_logger().info(f"K9 says: {result.output}")
         except Exception as e:
             self.get_logger().error(f"LLM call failed: {e}")
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = ContextAggregatorNode()
+    rclpy.spin(node)
+    node.destroy_node()
+    rclpy.shutdown()
