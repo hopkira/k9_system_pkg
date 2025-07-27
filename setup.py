@@ -25,9 +25,8 @@ setup(
         'console_scripts': [
             'back_lights = k9_system_pkg.back_lights:main',
             'ears = k9_system_pkg.ears:main',
-            'eyes = k9_system_pkg.eyes:main',
+            'eyestail = k9_system_pkg.eyestail:main',
             'k9_client = k9_system_pkg.k9_client:main',
-            'tail = k9_system_pkg.tail:main',
             'voice = k9_system_pkg.voice:main',
             'context = k9_system_pkg.context:main',
             'ollama = k9_system_pkg.ollama_wrap:main',            

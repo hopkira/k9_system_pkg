@@ -23,8 +23,7 @@ def generate_launch_description():
         'ollama',
         'back_lights',
         'ears',
-        'eyes',
-        'tail',
+        'eyestail',
         'voice',
     ]
 
