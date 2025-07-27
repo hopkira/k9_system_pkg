@@ -13,8 +13,11 @@ import adafruit_pca9685
 
 class Eyes:
     def __init__(self):
-        i2c = busio.I2C(board.SCL, board.SDA)
-        self.pca = adafruit_pca9685.PCA9685(i2c)
+        try:
+            i2c = busio.I2C(board.SCL, board.SDA)
+            self.pca = adafruit_pca9685.PCA9685(i2c)
+        except Exception as e:
+            self.get_logger().error(f"Failed to initialize servo controller: {e}")
         self.pca.frequency = 1000
         self._level = 0.0
         self.set_level(0.0)
