@@ -22,12 +22,12 @@ class Ears:
                 timeout=10
             )
         except serial.SerialException as e:
-            print(f"Failed to connect to ears: {e}")
+            self.get_logger().error(f"Failed to connect to ears: {e}")
             self.ser = None
         self.following = False
 
     def __write(self, text: str) -> None:
-        print("Ears:", text)
+        self.get_logger().debug(f"Ears: {text}")
         self.ser.write(str.encode(text + "()\n"))
 
     def stop(self) -> None:
