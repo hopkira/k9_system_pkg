@@ -11,7 +11,8 @@ import time
 class Ears:
     """Class that communicates with the Espruino controlling K9's LIDAR ears"""
 
-    def __init__(self) -> None:
+    def __init__(self, node) -> None:
+        self.node = node
         try:
             self.ser = serial.Serial(
                 port='/dev/ears',
@@ -27,7 +28,7 @@ class Ears:
         self.following = False
 
     def __write(self, text: str) -> None:
-        self.get_logger().debug(f"Ears: {text}")
+        self.node.get_logger().debug(f"Ears: {text}")
         self.ser.write(str.encode(text + "()\n"))
 
     def stop(self) -> None:
@@ -79,7 +80,7 @@ class Ears:
 class EarsServiceNode(Node):
     def __init__(self):
         super().__init__('ears_service_node')
-        self.ears = Ears()
+        self.ears = Ears(self)
         self.get_logger().info("Ears Node is running.")
 
         # Register services
