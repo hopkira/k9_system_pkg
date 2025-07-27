@@ -15,7 +15,7 @@ class K9TTSNode(Node):
     def __init__(self):
         super().__init__('k9_tts_node')
 
-        model_path = "./k9_2449_model.onnx"  # Update with your model path
+        model_path = "/home/hopkira/GitHub/k9_piper_voice/k9_2449_model.onnx"  # Update with your model path
         self.voice = PiperVoice.load(model_path)
 
         # Subscribe to the topic for regular speech
