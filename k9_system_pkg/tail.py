@@ -7,12 +7,13 @@ from std_srvs.srv import Trigger
 import time
 import board
 import busio
-import adafruit_pca9685
+from adafruit_pca9685 import PCA9685
+
 
 class Tail:
     def __init__(self):
-        i2c = busio.I2C(board.SCL, board.SDA)
-        self.pca = adafruit_pca9685.PCA9685(i2c)
+        self.i2c = busio.I2C(board.SCL, board.SDA)
+        self.pca = PCA9685(self.i2c, address=0x40)
         self.pca.frequency = 60
         self.centre()
 
