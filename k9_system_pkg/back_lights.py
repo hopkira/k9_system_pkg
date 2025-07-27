@@ -11,15 +11,18 @@ import ast
 class BackLightsNode(Node):
     def __init__(self):
         super().__init__('back_lights_node')
-
-        self.ser = serial.Serial(
-            port='/dev/backpanel',
-            baudrate=115200,
-            parity=serial.PARITY_NONE,
-            stopbits=serial.STOPBITS_ONE,
-            bytesize=serial.EIGHTBITS,
-            timeout=1
-        )
+        try:
+            self.ser = serial.Serial(
+                port='/dev/backpanel',
+                baudrate=115200,
+                parity=serial.PARITY_NONE,
+                stopbits=serial.STOPBITS_ONE,
+                bytesize=serial.EIGHTBITS,
+                timeout=1
+            )
+        except serial.SerialException as e:
+            self.get_logger().error(f"Failed to connect to back panel: {e}")
+            self.ser = None
 
         self.create_service(Trigger, 'back_lights_on', self.on_handler)
         self.create_service(Trigger, 'back_lights_off', self.off_handler)

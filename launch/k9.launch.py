@@ -5,7 +5,7 @@ from launch_ros.actions import Node
 from datetime import datetime
 
 # Usage:
-# ros2 launch k9_system_pkg.k9.launch.py log_level:=debug
+# ros2 launch k9_system_pkg k9.launch.py log_level:=debug
 
 def generate_launch_description():
     # Launch argument for log level

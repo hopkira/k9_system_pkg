@@ -12,14 +12,18 @@ class Ears:
     """Class that communicates with the Espruino controlling K9's LIDAR ears"""
 
     def __init__(self) -> None:
-        self.ser = serial.Serial(
-            port='/dev/ears',
-            baudrate=115200,
-            parity=serial.PARITY_NONE,
-            stopbits=serial.STOPBITS_ONE,
-            bytesize=serial.EIGHTBITS,
-            timeout=10
-        )
+        try:
+            self.ser = serial.Serial(
+                port='/dev/ears',
+                baudrate=115200,
+                parity=serial.PARITY_NONE,
+                stopbits=serial.STOPBITS_ONE,
+                bytesize=serial.EIGHTBITS,
+                timeout=10
+            )
+        except serial.SerialException as e:
+            print(f"Failed to connect to ears: {e}")
+            self.ser = None
         self.following = False
 
     def __write(self, text: str) -> None:
