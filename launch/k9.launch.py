@@ -20,7 +20,7 @@ def generate_launch_description():
     # List of all nodes in the package
     node_names = [
         'context',
-        'ollama_wrap',
+        'ollama',
         'back_lights',
         'ears',
         'eyes',
