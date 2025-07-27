@@ -51,7 +51,7 @@ class OllamaLLMNode(Node):
 
     def publish_to_voice(self, text: str):
         self.voice_pub.publish(String(data=text))
-        self.get_logger().info(f"Robot says: {text}")
+        self.get_logger().info(f"Queued speech: {text}")
 
 def main(args=None):
     rclpy.init(args=args)
