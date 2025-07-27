@@ -1,16 +1,20 @@
 import rclpy
+import threading
+import time
+import os
+
 from rclpy.node import Node
 from std_msgs.msg import Bool
 from std_srvs.srv import SetBool
-import threading
-import time
+from ament_index_python.packages import get_package_share_directory
 
 import pvporcupine
 from pvrecorder import PvRecorder
 from secrets import ACCESS_KEY
 
-# Path to your .ppn wake word file
-KEYWORD_PATH = "/home/hopkira/canine_en_raspberry-pi_v2_1_0.ppn"
+package_path = get_package_share_directory('k9_system_pkg')
+ppn_path = os.path.join(package_path, 'resource', 'canine_en_raspberry-pi_v2_1_0.ppn')
+
 
 class HotwordNode(Node):
     def __init__(self):
@@ -40,7 +44,7 @@ class HotwordNode(Node):
                 try:
                     self.porcupine = pvporcupine.create(
                         access_key=ACCESS_KEY,
-                        keyword_paths=[KEYWORD_PATH]
+                        keyword_paths=[ppn_path]
                     )
                     self.recorder = PvRecorder(device_index=-1, frame_length=self.porcupine.frame_length)
                     self.recorder.start()
