@@ -17,26 +17,28 @@ A node that controls the LIDAR ears on K9, specifically via a Trigger it can:
 * put them in follow mode
 * put them in safe rotate mode
 
-## Eyes
-A node that controls the face panel on K9. It subscribes to the 'is_talking' topic to automatically temporarily brighten the lights when K9 is talking. It also responds to:
-* set brightness (SetBrightness)
-* get brightness (GetBrightness)
-* turn on (Trigger)
-* turn off (Trigger)
-
-## Tail
-A simple node that responds to Triggers that enables the tail to:
-* Wag horizontally
-* Wag vertically
-* Cemtre the tail
-* Raise the tail
-* Lower the tail
+## Eyes and Tail
+A node that controls the servo controller in K9; this means it controls both the eyes and the tail.
+* For the face panel on K9. It subscribes to the 'is_talking' topic to automatically temporarily brighten the lights when K9 is talking. It also responds to:
+    * set brightness (SetBrightness)
+    * get brightness (GetBrightness)
+    * turn on (Trigger)
+    * turn off (Trigger)
+* For the tail, it responds to Triggers that enables the tail to:
+    * Wag horizontally
+    * Wag vertically
+    * Cemtre the tail
+    * Raise the tail
+    * Lower the tail
 
 ## Voice
 A complex node that enables K9 to speak on a FCFS via a Piper custom speech model. Subscribes to "tts_input" to get regular speech commands and places them in a queue. It publishes the 'is_talking' topic when the robot is talking.
 It can also receive commands to:
 * stop talking immediately (CancelSpeech)
 * pre-emptively make an announcement (Speak)
+
+## Hotword
+A node that is activated by a service call and then listens for the "canine" hotword. When it hears that word, it closes itself down and publishes to the 'hotword_detected' topic.
 
 ## K9 Client
 Provides a simple set of Python classes that wrap these ROS2 Nodes. The objects and interfaces are generally identical to
