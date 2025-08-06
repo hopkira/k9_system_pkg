@@ -2,11 +2,11 @@ import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
 from std_srvs.srv import Trigger
-from k9_system_pkg import calendar_helper as cal
-import json
-from datetime import datetime, timedelta
-import dateutil.parser
+import datetime
+from datetime import timezone
 import pytz
+import dateutil.parser
+from k9_system_pkg import calendar_helper as cal
 
 # ROS2 Calendar Node
 #
@@ -27,6 +27,7 @@ class CalendarNode(Node):
         # Declare configurable parameter for interval
         self.declare_parameter('check_interval', 60)
         interval = self.get_parameter('check_interval').get_parameter_value().integer_value
+        self.get_logger().info(f"Interval is set to {interval} seconds")
 
         # Publisher to TTS topic
         self.tts_pub = self.create_publisher(String, 'tts_input', 10)
@@ -39,22 +40,24 @@ class CalendarNode(Node):
         self.srv_next = self.create_service(Trigger, 'get_next_appointment', self.get_next_appointment)
 
         self.warned_events = set()
-        self.timezone = pytz.utc  # Update this if needed
+        self.timezone = pytz.timezone('Europe/London')
         self.get_logger().info('Calendar node started.')
 
     def check_calendar(self):
+        self.get_logger().info("Timer fired -checking calendar..")
         try:
             events = cal.get_upcoming_events(max_results=10)
-            now = datetime.now(tz=self.timezone)
+            now = datetime.datetime.now(self.timezone)
 
             for summary, start_str in events:
-                start_time = dateutil.parser.parse(start_str)
+                start_time = dateutil.parser.parse(start_str).astimezone(self.timezone)
                 time_to_event = (start_time - now).total_seconds()
 
                 if 295 < time_to_event < 305 and start_str not in self.warned_events:
                     self.warned_events.add(start_str)
                     message = f"You have a meeting in five minutes: {summary}."
                     self.publish_tts(message)
+
         except Exception as e:
             self.get_logger().error(f"Error checking calendar: {e}")
 
@@ -66,11 +69,14 @@ class CalendarNode(Node):
 
     def get_today_appointments(self, request, response):
         try:
-            today = datetime.now(tz=self.timezone)
-            end_of_day = today.replace(hour=23, minute=59, second=59)
+            now = datetime.datetime.now(self.timezone)
+            end_of_day = now.replace(hour=23, minute=59, second=59, microsecond=999999)
 
             events = cal.get_upcoming_events(max_results=20)
-            events_today = [(s, t) for s, t in events if dateutil.parser.parse(t) <= end_of_day]
+            events_today = [
+                (s, t) for s, t in events
+                if dateutil.parser.parse(t).astimezone(self.timezone) <= end_of_day
+            ]
 
             if not events_today:
                 response.success = True
@@ -109,7 +115,7 @@ class CalendarNode(Node):
 
     def format_event(self, summary, start):
         dt = dateutil.parser.parse(start).astimezone(self.timezone)
-        spoken_time = dt.strftime('%I:%M %p').lstrip("0").replace(':00', '')  # e.g., '10:00 AM' → '10 a.m.'
+        spoken_time = dt.strftime('%I:%M %p').lstrip("0").replace(':00', '')  # e.g., '10:00 AM' → '10 AM'
         spoken_time = spoken_time.replace('AM', 'a.m.').replace('PM', 'p.m.')
         return f"You have a meeting at {spoken_time} with {summary}."
 
@@ -130,3 +136,4 @@ def main(args=None):
 
 if __name__ == '__main__':
     main()
+
