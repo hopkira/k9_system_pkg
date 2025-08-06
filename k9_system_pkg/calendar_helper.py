@@ -3,13 +3,16 @@ import pickle
 import os.path
 from googleapiclient.discovery import build
 from google.auth.transport.requests import Request
+from ament_index_python.packages import get_package_share_directory
 
 SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
 
 def get_calendar_service():
     creds = None
-    if os.path.exists('token.pickle'):
-        with open('token.pickle', 'rb') as token:
+    pkg_share = get_package_share_directory('k9_system_pkg')
+    token_file = os.path.join(pkg_share, 'assets', 'token.pickle')
+    if os.path.exists(token_file):
+        with open(token_file, 'rb') as token:
             creds = pickle.load(token)
 
     if not creds or not creds.valid:
