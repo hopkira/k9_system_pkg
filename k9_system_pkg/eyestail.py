@@ -22,6 +22,8 @@ class EyesTail:
         self._level = 0.0
         self.set_level(0.0)
         self.centre()
+        self.pca.setPWM(5,0,0)
+        self.pca.setPWM(4,0,0)
 
     def set_level(self, level: float) -> None:
         value = int(min(max(level, 0.0), 1.0) * 65535)
@@ -45,6 +47,8 @@ class EyesTail:
             self.pca.channels[5].duty_cycle = 7042
             time.sleep(0.25)
         self.pca.channels[5].duty_cycle = 5601
+        self.pca.setPWM(5,0,0)
+        self.pca.setPWM(4,0,0)
 
     def wag_v(self):
         self.pca.channels[5].duty_cycle = 5601
@@ -54,18 +58,28 @@ class EyesTail:
             self.pca.channels[4].duty_cycle = 4321
             time.sleep(0.25)
         self.pca.channels[4].duty_cycle = 5121
+        self.pca.setPWM(5,0,0)
+        self.pca.setPWM(4,0,0)
 
     def centre(self):
         self.pca.channels[4].duty_cycle = 5121
         self.pca.channels[5].duty_cycle = 5601
+        self.pca.setPWM(5,0,0)
+        self.pca.setPWM(4,0,0)
+
 
     def up(self):
         self.pca.channels[5].duty_cycle = 5601
         self.pca.channels[4].duty_cycle = 4321
+        self.pca.setPWM(5,0,0)
+        self.pca.setPWM(4,0,0)
+
 
     def down(self):
         self.pca.channels[5].duty_cycle = 5601
         self.pca.channels[4].duty_cycle = 5921
+        self.pca.setPWM(5,0,0)
+        self.pca.setPWM(4,0,0)
 
 
 class EyesTailServiceNode(Node):
