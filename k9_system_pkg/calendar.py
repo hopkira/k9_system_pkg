@@ -25,9 +25,9 @@ class CalendarNode(Node):
         super().__init__('calendar_node')
 
         # Declare configurable parameter for interval
-        self.declare_parameter('check_interval', 60)
+        self.declare_parameter('check_interval', 150)
         interval = self.get_parameter('check_interval').get_parameter_value().integer_value
-        self.get_logger().info(f"Interval is set to {interval} seconds")
+        self.get_logger().info(f"Interval is set to {interval} seconds.")
 
         # Publisher to TTS topic
         self.tts_pub = self.create_publisher(String, 'tts_input', 10)
@@ -44,18 +44,22 @@ class CalendarNode(Node):
         self.get_logger().info('Calendar node started.')
 
     def check_calendar(self):
-        self.get_logger().info("Timer fired -checking calendar..")
+        self.get_logger().debug("Timer fired -checking calendar..")
         try:
-            events = cal.get_upcoming_events(max_results=10)
+            events = cal.get_upcoming_events(max_results=3)
+            if not events:
+                self.get_logger().debug("No upcoming events found.")
+            else:
+                self.get_logger().debug(f"Found {len(events)} upcoming events.")
             now = datetime.datetime.now(self.timezone)
-
             for summary, start_str in events:
                 start_time = dateutil.parser.parse(start_str).astimezone(self.timezone)
                 time_to_event = (start_time - now).total_seconds()
 
-                if 295 < time_to_event < 305 and start_str not in self.warned_events:
+                if 0 < time_to_event < 305 and start_str not in self.warned_events:
                     self.warned_events.add(start_str)
-                    message = f"You have a meeting in five minutes: {summary}."
+                    time_to_meet = round(time_to_event/60)
+                    message = f"You have {summary} in {time_to_meet} minutes: {summary}."
                     self.publish_tts(message)
 
         except Exception as e:
@@ -117,7 +121,7 @@ class CalendarNode(Node):
         dt = dateutil.parser.parse(start).astimezone(self.timezone)
         spoken_time = dt.strftime('%I:%M %p').lstrip("0").replace(':00', '')  # e.g., '10:00 AM' → '10 AM'
         spoken_time = spoken_time.replace('AM', 'a.m.').replace('PM', 'p.m.')
-        return f"You have a meeting at {spoken_time} with {summary}."
+        return f"You have {summary} at {spoken_time}."
 
     def format_event_list(self, events):
         sentences = []

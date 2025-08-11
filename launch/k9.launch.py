@@ -25,6 +25,7 @@ def generate_launch_description():
         'ears',
         'eyestail',
         'voice',
+        'calendar',
     ]
 
     # Create all nodes with shared logging config
