@@ -91,7 +91,7 @@ class EyesTail:
 class EyesTailServiceNode(Node):
     def __init__(self):
         super().__init__('eyes_tail_service_node')
-        self.eyes = EyesTail()
+        self.eyestail = EyesTail()
         self.get_logger().info("Eyes and Tail Node is running.")
 
         self._is_talking = False
@@ -115,13 +115,13 @@ class EyesTailServiceNode(Node):
     def talking_cb(self, msg: Bool):
         if msg.data and not self._is_talking:
             # Start talking: store previous level, set full brightness
-            self._stored_level = self.eyes.get_level()
-            self.eyes.on()
+            self._stored_level = self.eyestail.get_level()
+            self.eyestail.on()
             self._is_talking = True
             self.get_logger().debug("Talking detected: eyes set to 100%")
         elif not msg.data and self._is_talking:
             # Stop talking: restore previous level
-            self.eyes.set_level(self._stored_level)
+            self.eyestail.set_level(self._stored_level)
             self._is_talking = False
             self.get_logger().debug(f"Stopped talking: eyes restored to {self._stored_level:.2f}")
 
@@ -133,7 +133,7 @@ class EyesTailServiceNode(Node):
             response.message = message
             self.get_logger().info(message)
             return response
-        self.eyes.set_level(request.level)
+        self.eyestail.set_level(request.level)
         response.success = True
         message = f"Brightness set to {request.level:.2f}"
         response.message = message
@@ -141,7 +141,7 @@ class EyesTailServiceNode(Node):
         return response
 
     def get_level_cb(self, request, response):
-        response.level = self.eyes.get_level()
+        response.level = self.eyestail.get_level()
         return response
 
     def on_cb(self, request, response):
@@ -151,7 +151,7 @@ class EyesTailServiceNode(Node):
             response.message = message
             self.get_logger().info(message)
             return response
-        self.eyes.on()
+        self.eyestail.on()
         response.success = True
         message = "Eyes turned on."
         response.message = message
@@ -165,7 +165,7 @@ class EyesTailServiceNode(Node):
             response.message = message
             self.get_logger().info(message)
             return response
-        self.eyes.off()
+        self.eyestail.off()
         response.success = True
         message = "Eyes turned off."
         response.message = message
@@ -173,7 +173,7 @@ class EyesTailServiceNode(Node):
         return response
     
     def wag_h_cb(self, request, response):
-        self.tail.wag_h()
+        self.eyestail.wag_h()
         response.success = True
         message = "Tail wagged horizontally."
         response.message = message
@@ -181,7 +181,7 @@ class EyesTailServiceNode(Node):
         return response
 
     def wag_v_cb(self, request, response):
-        self.tail.wag_v()
+        self.eyestail.wag_v()
         response.success = True
         message = "Tail wagged vertically."
         response.message = message
@@ -189,7 +189,7 @@ class EyesTailServiceNode(Node):
         return response
 
     def centre_cb(self, request, response):
-        self.tail.centre()
+        self.eyestail.centre()
         response.success = True
         message = "Tail centred."
         response.message = message
@@ -197,7 +197,7 @@ class EyesTailServiceNode(Node):
         return response
 
     def up_cb(self, request, response):
-        self.tail.up()
+        self.eyestail.up()
         response.success = True
         message = "Tail raised."
         response.message = message
@@ -205,7 +205,7 @@ class EyesTailServiceNode(Node):
         return response
 
     def down_cb(self, request, response):
-        self.tail.down()
+        self.eyestail.down()
         response.success = True
         message = "Tail lowered."
         response.message = message
