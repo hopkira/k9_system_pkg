@@ -71,14 +71,12 @@ class EyesTail:
         self.pca.channels[5].duty_cycle = 0
         self.pca.channels[4].duty_cycle = 0
 
-
     def up(self):
         self.pca.channels[5].duty_cycle = 5601
         self.pca.channels[4].duty_cycle = 4321
         time.sleep(0.25)
-        self.pca.set_pwm(5,0,0)
-        self.pca.set_pwm(4,0,0)
-
+        self.pca.channels[5].duty_cycle = 0
+        self.pca.channels[4].duty_cycle = 0
 
     def down(self):
         self.pca.channels[5].duty_cycle = 5601
