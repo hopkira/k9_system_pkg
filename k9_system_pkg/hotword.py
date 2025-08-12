@@ -4,7 +4,7 @@ import time
 import os
 
 from rclpy.node import Node
-from std_msgs.msg import Bool
+from std_msgs.msg import Bool, Empty
 from std_srvs.srv import SetBool
 from ament_index_python.packages import get_package_share_directory
 
@@ -26,7 +26,7 @@ class HotwordNode(Node):
 
         # ROS interfaces
         self.create_service(SetBool, 'enable_hotword', self.handle_enable_hotword)
-        self.publisher = self.create_publisher(Bool, 'hotword_detected', 10)
+        self.publisher = self.create_publisher(Empty, 'hotword_detected', 10)
 
         # Background listening thread
         self.thread = threading.Thread(target=self.listen_loop, daemon=True)
@@ -85,8 +85,10 @@ class HotwordNode(Node):
                         result = self.porcupine.process(pcm)
                         if result >= 0:
                             self.get_logger().info("Hotword detected!")
-                            self.publisher.publish(Bool(data=True))
-                            time.sleep(1.0)  # debounce
+                            self.publisher.publish(Empty())
+                            self.stop_listening()  # stop immediately
+    # No debounce here — BT will decide when to re-enable
+
                     except Exception as e:
                         self.get_logger().error(f"Detection error: {e}")
                         self.stop_listening()
