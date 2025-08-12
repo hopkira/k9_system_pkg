@@ -32,7 +32,8 @@ setup(
             'voice = k9_system_pkg.voice:main',
             'context = k9_system_pkg.context:main',
             'ollama = k9_system_pkg.ollama_wrap:main',
-            'calendar = k9_system_pkg.calendar:main', 
+            'calendar = k9_system_pkg.calendar:main',
+            'hotword = k9_system_pkg.hotword:main',
         ],
     },
 )

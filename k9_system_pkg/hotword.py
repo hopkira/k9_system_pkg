@@ -87,8 +87,6 @@ class HotwordNode(Node):
                             self.get_logger().info("Hotword detected!")
                             self.publisher.publish(Empty())
                             self.stop_listening()  # stop immediately
-    # No debounce here — BT will decide when to re-enable
-
                     except Exception as e:
                         self.get_logger().error(f"Detection error: {e}")
                         self.stop_listening()
