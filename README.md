@@ -40,6 +40,9 @@ It can also receive commands to:
 ## Hotword
 A node that is activated by a service call and then listens for the "canine" hotword. When it hears that word, it closes itself down and publishes to the 'hotword_detected' topic.
 
+## Calendar
+A node that works with Google Calendar. It offers two services that announce the next appointment or the whole day's worth of appointments - or if there is an appointment in the next five minutes it will provide a reminder. Uses the topic subscribed to by the Voice node to make the announcements verbal.
+
 ## K9 Client
 Provides a simple set of Python classes that wrap these ROS2 Nodes. The objects and interfaces are generally identical to
 those used on the non-ROS version of K9 and can be used to write simple programs without knowledge of ROS.
