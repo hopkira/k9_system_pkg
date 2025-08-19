@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 import requests
 import time
 
-from k9_system_pkg.resources.secrets import MET_API_KEY
+from k9_system_pkg.secrets import MET_API_KEY
 from k9_interfaces_pkg.srv import GetWeatherProfile  # generated from .srv
 
 uk_tz = ZoneInfo("Europe/London")
