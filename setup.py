@@ -34,6 +34,8 @@ setup(
             'ollama = k9_system_pkg.ollama_wrap:main',
             'calendar = k9_system_pkg.calendar:main',
             'hotword = k9_system_pkg.hotword:main',
+            'weather = k9_system_pkg.weather:main',
+            'garden = k9_system_pkg.gardentasks:main',
         ],
     },
 )
