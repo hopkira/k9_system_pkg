@@ -21,7 +21,7 @@ class EyesTail:
             self.available = True
             self.node.get_logger().info("Eyes and tail hardware initialized successfully.")
         except Exception as e:
-            self.node.get_logger().warn(f"Failed to initialize servo controller: {e}")
+            self.node.get_logger().error(f"Failed to initialize servo controller: {e}")
         
         self._level = 0.0
         self.set_level(0.0)
