@@ -5,20 +5,24 @@ from rclpy.node import Node
 from std_srvs.srv import Trigger
 from std_msgs.msg import Bool
 from k9_interfaces_pkg.srv import SetBrightness, GetBrightness
-
 import time
-import board
-import busio
-from adafruit_pca9685 import PCA9685
 
 class EyesTail:
-    def __init__(self):
+    def __init__(self, node):
+        self.node = node
+        self.available = False
         try:
+            import board
+            import busio
+            from adafruit_pca9685 import PCA9685
             self.i2c = busio.I2C(board.SCL, board.SDA)
             self.pca = PCA9685(self.i2c, address=0x40)
+            self.pca.frequency = 60
+            self.available = True
+            self.node.get_logger().info("Eyes and tail hardware initialized successfully.")
         except Exception as e:
-            self.get_logger().error(f"Failed to initialize servo controller: {e}")
-        self.pca.frequency = 60
+            self.node.get_logger().warn(f"Failed to initialize servo controller: {e}")
+        
         self._level = 0.0
         self.set_level(0.0)
         self.centre()
@@ -27,20 +31,35 @@ class EyesTail:
         self.pca.channels[4].duty_cycle = 0
 
     def set_level(self, level: float) -> None:
+        if not self.available:
+            self.node.get_logger().warn("Cannot set level: hardware not available.")
+            return
         value = int(min(max(level, 0.0), 1.0) * 65535)
         self.pca.channels[0].duty_cycle = value
         self._level = level
 
     def off(self) -> None:
+        if not self.available:
+            self.node.get_logger().warn("Cannot turn off: hardware not available.")
+            return
         self.set_level(0.0)
 
     def on(self) -> None:
+        if not self.available:
+            self.node.get_logger().warn("Cannot turn on: hardware not available.")
+            return
         self.set_level(1.0)
 
     def get_level(self) -> float:
+        if not self.available:
+            self.node.get_logger().warn("Cannot get level: hardware not available.")
+            return 0.0
         return self._level
     
     def wag_h(self):
+        if not self.available:
+            self.node.get_logger().warn("Cannot wag tail horizontally: hardware not available.")
+            return
         self.pca.channels[4].duty_cycle = 5121
         for _ in range(4):
             self.pca.channels[5].duty_cycle = 5201
@@ -53,6 +72,9 @@ class EyesTail:
         self.pca.channels[4].duty_cycle = 0
 
     def wag_v(self):
+        if not self.available:
+            self.node.get_logger().warn("Cannot wag tail vertically: hardware not available.")
+            return
         self.pca.channels[5].duty_cycle = 5601
         for _ in range(4):
             self.pca.channels[4].duty_cycle = 5921
@@ -65,6 +87,9 @@ class EyesTail:
         self.pca.channels[4].duty_cycle = 0
 
     def centre(self):
+        if not self.available:
+            self.node.get_logger().warn("Cannot centre tail: hardware not available.")
+            return
         self.pca.channels[4].duty_cycle = 5121
         self.pca.channels[5].duty_cycle = 5601
         time.sleep(0.25)
@@ -72,6 +97,9 @@ class EyesTail:
         self.pca.channels[4].duty_cycle = 0
 
     def up(self):
+        if not self.available:
+            self.node.get_logger().warn("Cannot raise tail: hardware not available.")
+            return
         self.pca.channels[5].duty_cycle = 5601
         self.pca.channels[4].duty_cycle = 4321
         time.sleep(0.25)
@@ -79,6 +107,9 @@ class EyesTail:
         self.pca.channels[4].duty_cycle = 0
 
     def down(self):
+        if not self.available:
+            self.node.get_logger().warn("Cannot lower tail: hardware not available.")
+            return
         self.pca.channels[5].duty_cycle = 5601
         self.pca.channels[4].duty_cycle = 5921
         time.sleep(0.25)
@@ -89,7 +120,7 @@ class EyesTail:
 class EyesTailServiceNode(Node):
     def __init__(self):
         super().__init__('eyes_tail_service_node')
-        self.eyestail = EyesTail()
+        self.eyestail = EyesTail(self)
         self.get_logger().info("Eyes and Tail Node is running.")
 
         self._is_talking = False
