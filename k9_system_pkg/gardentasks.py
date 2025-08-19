@@ -9,8 +9,10 @@ from rclpy.node import Node
 from k9_interfaces_pkg.srv import GetGardenTasks, GetWeatherProfile  # assumes both srv files exist
 
 def to_int_or_none(value):
-    return int(value) if value.strip() else None
-
+    try:
+        return int(value) if value.strip() else None
+    except ValueError:
+        return None
 
 class GardenTaskServiceNode(Node):
     def __init__(self):
@@ -39,7 +41,7 @@ class GardenTaskServiceNode(Node):
                     "name": row["Task"],
                     "low_c": to_int_or_none(row["Low_C"]),
                     "high_c": to_int_or_none(row["High_C"]),
-                    "rain": bool(int(row["Rain"])),  # expect 0 or 1 in CSV
+                    "rain": bool(to_int_or_none(row["Rain"]) or 0),
                     "months": months,
                 }
                 tasks.append(task)
