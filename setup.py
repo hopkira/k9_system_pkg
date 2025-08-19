@@ -19,7 +19,7 @@ setup(
     maintainer='Richard Hopkins',
     maintainer_email='hopkira@googlemail.com',
     description='System nodes for K9',
-    license='Apache License',
+    license='Apache-2.0',
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
