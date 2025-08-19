@@ -25,7 +25,7 @@ def generate_launch_description():
         'ears',
         'eyestail',
         'voice',
-        'k9_calendar',
+        'calendar',
         'weather',
         'garden',
     ]
