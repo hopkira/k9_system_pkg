@@ -27,8 +27,11 @@ class EyesTail:
         self.set_level(0.0)
         self.centre()
         time.sleep(0.25)
-        self.pca.channels[5].duty_cycle = 0
-        self.pca.channels[4].duty_cycle = 0
+        if self.available:
+            self.pca.channels[5].duty_cycle = 0
+            self.pca.channels[4].duty_cycle = 0
+        else:
+            self.node.get_logger().warn("Eyes and tail hardware not available, defaulting to off state.")
 
     def set_level(self, level: float) -> None:
         if not self.available:
