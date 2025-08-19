@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-import rclpy
-from rclpy.node import Node
+import os
 import csv
 from datetime import date, datetime
+from ament_index_python.packages import get_package_share_directory
+import rclpy
+from rclpy.node import Node
 
 from k9_interfaces_pkg.srv import GetGardenTasks, GetWeatherProfile  # assumes both srv files exist
 
@@ -15,7 +17,9 @@ class GardenTaskServiceNode(Node):
         super().__init__("task_service")
 
         # Load tasks once from CSV
-        self.tasks = self.load_tasks("./resource/Garden_and_Pond_Tasks.csv")
+        assets_dir = os.path.join(get_package_share_directory('k9_system_pkg'), 'assets')
+        csv_file = os.path.join(assets_dir, "Garden_and_Pond_Tasks.csv")
+        self.tasks = self.load_tasks(csv_file)
 
         # Create service
         self.srv = self.create_service(GetGardenTasks, "get_tasks", self.handle_get_tasks)
