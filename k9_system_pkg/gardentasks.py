@@ -4,7 +4,7 @@ from rclpy.node import Node
 import csv
 from datetime import date, datetime
 
-from k9_system_pkg.srv import GetGardenTasks, GetWeatherProfile  # assumes both srv files exist
+from k9_interfaces_pkg.srv import GetGardenTasks, GetWeatherProfile  # assumes both srv files exist
 
 def to_int_or_none(value):
     return int(value) if value.strip() else None
