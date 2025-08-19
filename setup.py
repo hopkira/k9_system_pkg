@@ -7,7 +7,7 @@ package_name = 'k9_system_pkg'
 setup(
     name=package_name,
     version='0.0.0',
-    packages=find_packages(include=['k9_system_pkg', 'k9_system_pkg.*']),
+    packages= find_packages(include=[package_name, package_name + '.*']),
     data_files=[
         ('share/ament_index/resource_index/packages', []),
         ('share/' + package_name, ['package.xml']),
