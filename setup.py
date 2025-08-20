@@ -33,6 +33,7 @@ setup(
             'hotword = k9_system_pkg.hotword:main',
             'weather = k9_system_pkg.weather:main',
             'garden = k9_system_pkg.gardentasks:main',
+            'hotword = k9_system_pkg.hotword:main',
         ],
     },
 )
