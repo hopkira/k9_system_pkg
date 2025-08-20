@@ -28,6 +28,9 @@ def generate_launch_description():
         'calendar',
         'weather',
         'garden',
+        'stt',
+        'face_detect',
+        'hotword',
     ]
 
     # Create all nodes with shared logging config
