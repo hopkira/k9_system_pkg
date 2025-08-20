@@ -14,7 +14,7 @@ A node that:
 * set patterns of back light activity (LightsControl)
 * retrieves the status of K9's back panel switches (SwitchState)
 
-'ros2 service call /back_lights_on std_srvs/srv/Trigger'
+`ros2 service call /back_lights_on std_srvs/srv/Trigger`
 
 ## Ears
 A node that controls the LIDAR ears on K9, specifically via a Trigger it can:
@@ -39,7 +39,7 @@ A node that controls the servo controller in K9; this means it controls both the
     * Raise the tail
     * Lower the tail
 
-'ros2 service call /tail_wag_v std_srvs/srv/Trigger'
+`ros2 service call /tail_wag_v std_srvs/srv/Trigger`
 
 ## Voice
 A complex node that enables K9 to speak on a FCFS via a Piper custom speech model. Subscribes to "tts_input" to get regular speech commands and places them in a queue. It publishes the 'is_talking' topic when the robot is talking.
