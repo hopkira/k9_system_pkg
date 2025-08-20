@@ -1,5 +1,11 @@
 # K9 System ROS 2 Nodes
-These ROS 2 nodes work together to create a real robot K9 that can do everything from playing chessðŸ˜‰ to following you around the house.
+These ROS 2 nodes work together to create a real robot K9 that can do everything from:
+* playing chess
+* following you around the house
+* to telling you:
+   * the best time to go for a walk
+   * when your next Google Calendar appointment is
+   * a list of tasks in the garden based on weather and month
 
 ## Back Lights and Side Screen
 A node that:
@@ -7,6 +13,8 @@ A node that:
 * turns K9's side screen on or off (Trigger)
 * set patterns of back light activity (LightsControl)
 * retrieves the status of K9's back panel switches (SwitchState)
+
+'ros2 service call /back_lights_on std_srvs/srv/Trigger'
 
 ## Ears
 A node that controls the LIDAR ears on K9, specifically via a Trigger it can:
@@ -30,6 +38,8 @@ A node that controls the servo controller in K9; this means it controls both the
     * Cemtre the tail
     * Raise the tail
     * Lower the tail
+
+'ros2 service call /tail_wag_v std_srvs/srv/Trigger'
 
 ## Voice
 A complex node that enables K9 to speak on a FCFS via a Piper custom speech model. Subscribes to "tts_input" to get regular speech commands and places them in a queue. It publishes the 'is_talking' topic when the robot is talking.
