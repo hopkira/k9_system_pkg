@@ -47,6 +47,13 @@ It can also receive commands to:
 * stop talking immediately (CancelSpeech)
 * pre-emptively make an announcement (Speak)
 
+```
+ros2 topic echo /is_talking
+ros2 topic pub /tts_input std_msgs/String "{data: 'I am a very clever robot called K9'}" -1
+ros2 service call /speak_now k9_interfaces_pkg/srv/Speak "{text: 'Hello'}"
+ros2 service call /cancel_speech k9_interfaces_pkg/srv/CancelSpeech
+```
+
 ## Hotword
 A node that is activated by a service call and then listens for the "canine" hotword. When it hears that word, it closes itself down and publishes to the 'hotword_detected' topic.
 
