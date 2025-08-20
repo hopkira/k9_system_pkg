@@ -4,8 +4,8 @@ import time
 import os
 
 from rclpy.node import Node
-from std_msgs.msg import Bool, Empty
-from std_srvs.srv import SetBool
+from std_msgs.msg import Empty
+from audio_common_msgs.msg import AudioData
 from ament_index_python.packages import get_package_share_directory
 
 import pvporcupine
@@ -20,78 +20,51 @@ class HotwordNode(Node):
     def __init__(self):
         super().__init__('hotword_node')
 
-        # Runtime state
-        self.listening = False
-        self.lock = threading.Lock()
-
         # ROS interfaces
-        self.create_service(SetBool, 'enable_hotword', self.handle_enable_hotword)
-        self.publisher = self.create_publisher(Empty, 'hotword_detected', 10)
+        self.hotword_pub = self.create_publisher(Empty, 'hotword_detected', 10)
+        self.audio_pub = self.create_publisher(AudioData, 'mic_audio', 10)
 
-        # Background listening thread
+        # Setup Porcupine + recorder
+        self.porcupine = pvporcupine.create(
+            access_key=ACCESS_KEY,
+            keyword_paths=[ppn_path]
+        )
+        self.recorder = PvRecorder(device_index=-1, frame_length=self.porcupine.frame_length)
+        self.recorder.start()
+
+        # Background thread
         self.thread = threading.Thread(target=self.listen_loop, daemon=True)
         self.thread.start()
 
-        # Setup placeholders
-        self.porcupine = None
-        self.recorder = None
-
-        self.get_logger().info("HotwordNode ready.")
-
-    def handle_enable_hotword(self, request, response):
-        with self.lock:
-            if request.data and not self.listening:
-                try:
-                    self.porcupine = pvporcupine.create(
-                        access_key=ACCESS_KEY,
-                        keyword_paths=[ppn_path]
-                    )
-                    self.recorder = PvRecorder(device_index=-1, frame_length=self.porcupine.frame_length)
-                    self.recorder.start()
-                    self.listening = True
-                    self.get_logger().info("Hotword detection ENABLED.")
-                    response.success = True
-                    response.message = "Listening started."
-                except Exception as e:
-                    self.get_logger().error(f"Failed to start Porcupine: {e}")
-                    response.success = False
-                    response.message = str(e)
-            elif not request.data and self.listening:
-                self.stop_listening()
-                self.get_logger().info("Hotword detection DISABLED.")
-                response.success = True
-                response.message = "Listening stopped."
-            else:
-                response.success = True
-                response.message = "No change."
-        return response
-
-    def stop_listening(self):
-        if self.recorder:
-            self.recorder.stop()
-            self.recorder.delete()
-            self.recorder = None
-        if self.porcupine:
-            self.porcupine.delete()
-            self.porcupine = None
-        self.listening = False
+        self.get_logger().info("HotwordNode ready (mic open, streaming audio).")
 
     def listen_loop(self):
         while rclpy.ok():
-            with self.lock:
-                if self.listening and self.recorder and self.porcupine:
-                    try:
-                        pcm = self.recorder.read()
-                        result = self.porcupine.process(pcm)
-                        if result >= 0:
-                            self.get_logger().info("Hotword detected!")
-                            self.publisher.publish(Empty())
-                            self.stop_listening()  # stop immediately
-                    except Exception as e:
-                        self.get_logger().error(f"Detection error: {e}")
-                        self.stop_listening()
-                else:
-                    time.sleep(0.1)  # idle wait
+            try:
+                pcm = self.recorder.read()  # list[int16]
+                # Publish audio for STT
+                msg = AudioData()
+                msg.data = bytearray(pcm)  # convert to bytes
+                self.audio_pub.publish(msg)
+
+                # Run hotword detection
+                result = self.porcupine.process(pcm)
+                if result >= 0:
+                    self.get_logger().info("Hotword detected!")
+                    self.hotword_pub.publish(Empty())
+                    # NOTE: mic stays open; STT node will react to voice_state
+            except Exception as e:
+                self.get_logger().error(f"Detection error: {e}")
+                time.sleep(0.1)
+
+    def destroy_node(self):
+        # Cleanup when node is shut down
+        if self.recorder:
+            self.recorder.stop()
+            self.recorder.delete()
+        if self.porcupine:
+            self.porcupine.delete()
+        super().destroy_node()
 
 
 def main(args=None):
@@ -102,7 +75,6 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     finally:
-        node.stop_listening()
         node.destroy_node()
         rclpy.shutdown()
 
