@@ -3,6 +3,8 @@ import threading
 import time
 import os
 
+import numpy as np
+
 from rclpy.node import Node
 from std_msgs.msg import Empty
 from audio_common_msgs.msg import AudioData
@@ -42,9 +44,10 @@ class HotwordNode(Node):
         while rclpy.ok():
             try:
                 pcm = self.recorder.read()  # list[int16]
+                pcm = np.array(pcm, dtype=np.int16)
                 # Publish audio for STT
                 msg = AudioData()
-                msg.data = bytearray(pcm)  # convert to bytes
+                msg.data = pcm.tobytes()  # convert to bytes
                 self.audio_pub.publish(msg)
 
                 # Run hotword detection
