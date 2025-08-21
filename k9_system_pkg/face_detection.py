@@ -109,6 +109,8 @@ class FaceDetectionNode(Node):
                 x_max = int(min(self.width, max(xs) * self.width))
                 y_max = int(min(self.height, max(ys) * self.height))
 
+                self.get_logger().debug(f"Detected face at bbox: ({x_min},{y_min},{x_max},{y_max})")
+
                 face_msg.bbox = BoundingBox(x=x_min, y=y_min, width=x_max - x_min, height=y_max - y_min)
 
                 # Crop face image
