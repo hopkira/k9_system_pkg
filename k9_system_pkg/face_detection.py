@@ -3,21 +3,21 @@ from rclpy.node import Node
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
 import mediapipe as mp
-import cv2
 import threading
 import time
+from picamera2 import Picamera2, Preview
 
-from k9_interfaces_pkg.msg import FaceWithLandmarks, BoundingBox, FaceLandmark  # Replace with actual package
+from k9_interfaces_pkg.msg import FaceWithLandmarks, BoundingBox, FaceLandmark
 
 # Optimized landmark indices
 OPTIMIZED_LANDMARKS = [
-    33, 133, 159, 145,   # Left eye
-    263, 362, 386, 374,  # Right eye
-    70, 105, 107,         # Left eyebrow
-    336, 334, 300,        # Right eyebrow
-    1,                     # Nose tip
-    61, 291,               # Mouth corners
-    152                    # Chin
+    33, 133, 159, 145,
+    263, 362, 386, 374,
+    70, 105, 107,
+    336, 334, 300,
+    1,
+    61, 291,
+    152
 ]
 
 class FaceDetectionNode(Node):
@@ -25,33 +25,36 @@ class FaceDetectionNode(Node):
         super().__init__('face_detection_node')
 
         # Parameters
-        self.declare_parameter("camera_index", 0)
-        self.declare_parameter("frame_rate", 10.0)
+        self.declare_parameter("frame_rate", 15.0)  # higher frame rate
+        self.declare_parameter("camera_width", 640)  # smaller resolution for speed
+        self.declare_parameter("camera_height", 480)
         self.declare_parameter("max_num_faces", 1)
         self.declare_parameter("min_detection_confidence", 0.5)
         self.declare_parameter("min_tracking_confidence", 0.5)
 
-        self.camera_index = self.get_parameter("camera_index").get_parameter_value().integer_value
         self.frame_rate = self.get_parameter("frame_rate").get_parameter_value().double_value
+        self.width = self.get_parameter("camera_width").get_parameter_value().integer_value
+        self.height = self.get_parameter("camera_height").get_parameter_value().integer_value
         self.max_num_faces = self.get_parameter("max_num_faces").get_parameter_value().integer_value
         self.min_detection_conf = self.get_parameter("min_detection_confidence").get_parameter_value().double_value
         self.min_tracking_conf = self.get_parameter("min_tracking_confidence").get_parameter_value().double_value
 
-        self.last_frame_fail_log = 0.0
-        self.log_interval = 60.0  # seconds between repeated "read failed" logs
-
+        # Publisher
         self.publisher_ = self.create_publisher(FaceWithLandmarks, 'face_with_landmarks', 10)
         self.bridge = CvBridge()
 
-        self.cap = cv2.VideoCapture(self.camera_index)
-        if not self.cap.isOpened():
-            self.get_logger().warn(f"Failed to open camera at index {self.camera_index}")
+        # Picamera2 setup in video mode (faster and async-friendly)
+        self.picam2 = Picamera2()
+        config = self.picam2.create_video_configuration(
+            main={"size": (self.width, self.height), "format": "RGB888"}
+        )
+        self.picam2.configure(config)
+        try:
+            self.picam2.start()
+        except Exception as e:
+            self.get_logger().error(f"Failed to start Picamera2: {e}")
             rclpy.shutdown()
             return
-
-        timer_period = 1.0 / self.frame_rate
-        self.timer = self.create_timer(timer_period, self.start_detection_thread)
-        self._detection_lock = threading.Lock()
 
         # MediaPipe Face Mesh
         self.mp_face_mesh = mp.solutions.face_mesh
@@ -63,11 +66,15 @@ class FaceDetectionNode(Node):
             min_tracking_confidence=self.min_tracking_conf
         )
 
-        self.get_logger().info(
-            f"FaceDetectionNode started with camera_index={self.camera_index}, "
-            f"frame_rate={self.frame_rate} Hz, max_num_faces={self.max_num_faces}, "
-            f"min_detection_confidence={self.min_detection_conf}, min_tracking_confidence={self.min_tracking_conf}"
-        )
+        # Thread safety
+        self._detection_lock = threading.Lock()
+        timer_period = 1.0 / self.frame_rate
+        self.timer = self.create_timer(timer_period, self.start_detection_thread)
+
+        self.last_frame_fail_log = 0.0
+        self.log_interval = 30.0  # warn less frequently
+
+        self.get_logger().info(f"FaceDetectionNode started at {self.width}x{self.height} @ {self.frame_rate}Hz")
 
     def start_detection_thread(self):
         if self._detection_lock.locked():
@@ -76,41 +83,38 @@ class FaceDetectionNode(Node):
 
     def detect_faces(self):
         with self._detection_lock:
-            ret, frame = self.cap.read()
-            if not ret:
+            try:
+                frame = self.picam2.capture_array()
+            except Exception:
                 now = time.time()
                 if now - self.last_frame_fail_log > self.log_interval:
-                    self.get_logger().warn("Failed to read from camera (retrying)")
+                    self.get_logger().warn("Failed to capture frame from Picamera2")
                     self.last_frame_fail_log = now
                 return
 
-            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            results = self.face_mesh.process(frame_rgb)
+            # Direct RGB input to MediaPipe
+            results = self.face_mesh.process(frame)
 
             if not results.multi_face_landmarks:
                 return
-
-            height, width, _ = frame.shape
 
             for face_landmarks in results.multi_face_landmarks:
                 face_msg = FaceWithLandmarks()
                 face_msg.header.stamp = self.get_clock().now().to_msg()
 
-                # Compute bounding box
                 xs = [face_landmarks.landmark[i].x for i in OPTIMIZED_LANDMARKS]
                 ys = [face_landmarks.landmark[i].y for i in OPTIMIZED_LANDMARKS]
-                x_min = int(max(0, min(xs) * width))
-                y_min = int(max(0, min(ys) * height))
-                x_max = int(min(width, max(xs) * width))
-                y_max = int(min(height, max(ys) * height))
+                x_min = int(max(0, min(xs) * self.width))
+                y_min = int(max(0, min(ys) * self.height))
+                x_max = int(min(self.width, max(xs) * self.width))
+                y_max = int(min(self.height, max(ys) * self.height))
 
                 face_msg.bbox = BoundingBox(x=x_min, y=y_min, width=x_max - x_min, height=y_max - y_min)
 
                 # Crop face image
                 face_crop = frame[y_min:y_max, x_min:x_max]
-                face_msg.image = self.bridge.cv2_to_imgmsg(face_crop, encoding='bgr8')
+                face_msg.image = self.bridge.cv2_to_imgmsg(face_crop, encoding='rgb8')
 
-                # Add optimized landmarks
                 for idx in OPTIMIZED_LANDMARKS:
                     lm = face_landmarks.landmark[idx]
                     landmark_msg = FaceLandmark(x=lm.x, y=lm.y, z=lm.z)
@@ -119,10 +123,10 @@ class FaceDetectionNode(Node):
                 self.publisher_.publish(face_msg)
 
     def destroy_node(self):
-        if self.cap.isOpened():
-            self.cap.release()
         if self.timer:
             self.timer.cancel()
+        if self.picam2:
+            self.picam2.stop()
         self.face_mesh.close()
         super().destroy_node()
 
