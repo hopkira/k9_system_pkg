@@ -6,4 +6,4 @@ __pycache__/
 .env
 credentials.json
 token.pickle
-secrets.py
+my_secrets.py

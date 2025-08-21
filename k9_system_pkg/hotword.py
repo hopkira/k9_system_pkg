@@ -10,7 +10,7 @@ from ament_index_python.packages import get_package_share_directory
 
 import pvporcupine
 from pvrecorder import PvRecorder
-from secrets import ACCESS_KEY
+from my_secrets import ACCESS_KEY
 
 package_path = get_package_share_directory('k9_system_pkg')
 ppn_path = os.path.join(package_path, 'assets', 'canine_en_raspberry-pi_v2_1_0.ppn')
