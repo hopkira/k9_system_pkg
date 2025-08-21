@@ -13,7 +13,7 @@ from pvrecorder import PvRecorder
 from k9_system_pkg.my_secrets import ACCESS_KEY
 
 package_path = get_package_share_directory('k9_system_pkg')
-ppn_path = os.path.join(package_path, 'assets', 'canine_en_raspberry-pi_v2_1_0.ppn')
+ppn_path = os.path.join(package_path, 'assets', 'canine_en_raspberry-pi_v3_0_0.ppn')
 
 
 class HotwordNode(Node):
