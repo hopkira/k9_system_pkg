@@ -6,7 +6,7 @@ import mediapipe as mp
 import cv2
 import threading
 
-from k9_interfaces_pkg import FaceWithLandmarks, BoundingBox, FaceLandmark  # Replace with actual package
+from k9_interfaces_pkg.msg import FaceWithLandmarks, BoundingBox, FaceLandmark  # Replace with actual package
 
 # Optimized landmark indices
 OPTIMIZED_LANDMARKS = [
