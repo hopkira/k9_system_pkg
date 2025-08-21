@@ -5,6 +5,7 @@ from cv_bridge import CvBridge
 import mediapipe as mp
 import cv2
 import threading
+import time
 
 from k9_interfaces_pkg.msg import FaceWithLandmarks, BoundingBox, FaceLandmark  # Replace with actual package
 
@@ -36,12 +37,15 @@ class FaceDetectionNode(Node):
         self.min_detection_conf = self.get_parameter("min_detection_confidence").get_parameter_value().double_value
         self.min_tracking_conf = self.get_parameter("min_tracking_confidence").get_parameter_value().double_value
 
+        self.last_frame_fail_log = 0.0
+        self.log_interval = 60.0  # seconds between repeated "read failed" logs
+
         self.publisher_ = self.create_publisher(FaceWithLandmarks, 'face_with_landmarks', 10)
         self.bridge = CvBridge()
 
         self.cap = cv2.VideoCapture(self.camera_index)
         if not self.cap.isOpened():
-            self.get_logger().error(f"Failed to open camera at index {self.camera_index}")
+            self.get_logger().warn(f"Failed to open camera at index {self.camera_index}")
             rclpy.shutdown()
             return
 
@@ -74,7 +78,10 @@ class FaceDetectionNode(Node):
         with self._detection_lock:
             ret, frame = self.cap.read()
             if not ret:
-                self.get_logger().error("Failed to read from camera")
+                now = time.time()
+                if now - self.last_frame_fail_log > self.log_interval:
+                    self.get_logger().warn("Failed to read from camera (retrying)")
+                    self.last_frame_fail_log = now
                 return
 
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
