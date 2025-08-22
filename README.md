@@ -11,10 +11,15 @@ These ROS 2 nodes work together to create a real robot K9 that can do everything
 A node that:
 * turns lights on or off (Trigger)
 * turns K9's side screen on or off (Trigger)
-* set patterns of back light activity (LightsControl)
+* set custom patterns of back lights (LightsControl)
 * retrieves the status of K9's back panel switches (SwitchState)
 
-`ros2 service call /back_lights_on std_srvs/srv/Trigger`
+Use the `/back_lights_cmd` topic to send instructions to change the pattern of lights.  Current patterns include: original, colour, diagonal, two, three, four, six, red, green, blue, spiral, chase_v, chase_h, cols, rows, on, off. Speeds include fastest, fast, normal, slow, slowest.
+
+```
+ros2 service call /back_lights_on std_srvs/srv/Trigger`
+ros2 topic pub --once /back_lights_cmd std_msgs/msg/String "{data: 'blue'}"
+```
 
 ## Ears
 A node that controls the LIDAR ears on K9, specifically via a Trigger it can:
