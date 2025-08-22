@@ -9,7 +9,7 @@ These ROS 2 nodes work together to create a real robot K9 that can do everything
 
 ## Back Lights and Side Screen
 A node that:
-* turns lights on or off (Trigger)
+* turns lights on or off (back_lights_on; back_lights_off)
 * turns K9's side screen on or off (Trigger)
 * set custom patterns of back lights (LightsControl)
 * retrieves the status of K9's back panel switches (SwitchState)
@@ -23,12 +23,12 @@ ros2 topic pub --once /back_lights_cmd std_msgs/msg/String "{data: 'blue'}"
 
 ## Ears
 A node that controls the LIDAR ears on K9, specifically via a Trigger it can:
-* stop the ears
-* make them scan
-* make them move quickly
-* make them move as if he is thinking
-* put them in follow mode
-* put them in safe rotate mode
+* stop the ears (ears_stop)
+* make them scan (ears_scan)
+* make them move quickly (ears_fast)
+* make them move as if he is thinking (ears_think)
+* put them in follow mode (ears_follow_read)
+* put them in safe rotate mode (ears_safe_rotate)
 
 ## Eyes and Tail
 A node that controls the servo controller in K9; this means it controls both the eyes and the tail.
@@ -38,11 +38,11 @@ A node that controls the servo controller in K9; this means it controls both the
     * turn on (tv_on)
     * turn off (tv_off)
 * For the tail, it responds to Triggers that enables the tail to:
-    * Wag horizontally (wag_h)
-    * Wag vertically (wag v)
-    * Cemtre the tail (centre)
-    * Raise the tail (up)
-    * Lower the tail (down)
+    * Wag horizontally (tail_wag_h)
+    * Wag vertically (tail_wag v)
+    * Cemtre the tail (tail_centre)
+    * Raise the tail (tail_up)
+    * Lower the tail (tail_down)
 
 ```
 ros2 service call /tail_wag_v std_srvs/srv/Trigger
