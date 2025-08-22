@@ -33,18 +33,22 @@ A node that controls the LIDAR ears on K9, specifically via a Trigger it can:
 ## Eyes and Tail
 A node that controls the servo controller in K9; this means it controls both the eyes and the tail.
 * For the face panel on K9. It subscribes to the 'is_talking' topic to automatically temporarily brighten the lights when K9 is talking. It also responds to:
-    * set brightness (SetBrightness)
-    * get brightness (GetBrightness)
-    * turn on (Trigger)
-    * turn off (Trigger)
+    * set brightness (eyes_set_level)
+    * get brightness (eyes_get_brightness)
+    * turn on (tv_on)
+    * turn off (tv_off)
 * For the tail, it responds to Triggers that enables the tail to:
-    * Wag horizontally
-    * Wag vertically
-    * Cemtre the tail
-    * Raise the tail
-    * Lower the tail
+    * Wag horizontally (wag_h)
+    * Wag vertically (wag v)
+    * Cemtre the tail (centre)
+    * Raise the tail (up)
+    * Lower the tail (down)
 
-`ros2 service call /tail_wag_v std_srvs/srv/Trigger`
+```
+ros2 service call /tail_wag_v std_srvs/srv/Trigger
+ros2 service call /eyes_on std_srvs/srv/Trigger
+ros2 service call /eyes_set_level k9_interfaces_pkg/srv/SetBrightness "{level: 0.01}"
+```
 
 ## Voice
 A complex node that enables K9 to speak on a FCFS via a Piper custom speech model. Subscribes to "tts_input" to get regular speech commands and places them in a queue. It publishes the 'is_talking' topic when the robot is talking.
