@@ -9,37 +9,46 @@ These ROS 2 nodes work together to create a real robot K9 that can do everything
 
 ## Back Lights and Side Screen
 A node that:
-* turns lights on or off (Trigger)
+* turns lights on or off (back_lights_on; back_lights_off)
 * turns K9's side screen on or off (Trigger)
-* set patterns of back light activity (LightsControl)
+* set custom patterns of back lights (LightsControl)
 * retrieves the status of K9's back panel switches (SwitchState)
 
-`ros2 service call /back_lights_on std_srvs/srv/Trigger`
+Use the `/back_lights_cmd` topic to send instructions to change the pattern of lights.  Current patterns include: original, colour, diagonal, two, three, four, six, red, green, blue, spiral, chase_v, chase_h, cols, rows, on, off. Speeds include fastest, fast, normal, slow, slowest.
+
+```
+ros2 service call /back_lights_on std_srvs/srv/Trigger`
+ros2 topic pub --once /back_lights_cmd std_msgs/msg/String "{data: 'blue'}"
+```
 
 ## Ears
 A node that controls the LIDAR ears on K9, specifically via a Trigger it can:
-* stop the ears
-* make them scan
-* make them move quickly
-* make them move as if he is thinking
-* put them in follow mode
-* put them in safe rotate mode
+* stop the ears (ears_stop)
+* make them scan (ears_scan)
+* make them move quickly (ears_fast)
+* make them move as if he is thinking (ears_think)
+* put them in follow mode (ears_follow_read)
+* put them in safe rotate mode (ears_safe_rotate)
 
 ## Eyes and Tail
 A node that controls the servo controller in K9; this means it controls both the eyes and the tail.
 * For the face panel on K9. It subscribes to the 'is_talking' topic to automatically temporarily brighten the lights when K9 is talking. It also responds to:
-    * set brightness (SetBrightness)
-    * get brightness (GetBrightness)
-    * turn on (Trigger)
-    * turn off (Trigger)
+    * set brightness (eyes_set_level)
+    * get brightness (eyes_get_brightness)
+    * turn on (tv_on)
+    * turn off (tv_off)
 * For the tail, it responds to Triggers that enables the tail to:
-    * Wag horizontally
-    * Wag vertically
-    * Cemtre the tail
-    * Raise the tail
-    * Lower the tail
+    * Wag horizontally (tail_wag_h)
+    * Wag vertically (tail_wag v)
+    * Cemtre the tail (tail_centre)
+    * Raise the tail (tail_up)
+    * Lower the tail (tail_down)
 
-`ros2 service call /tail_wag_v std_srvs/srv/Trigger`
+```
+ros2 service call /tail_wag_v std_srvs/srv/Trigger
+ros2 service call /eyes_on std_srvs/srv/Trigger
+ros2 service call /eyes_set_level k9_interfaces_pkg/srv/SetBrightness "{level: 0.01}"
+```
 
 ## Voice
 A complex node that enables K9 to speak on a FCFS via a Piper custom speech model. Subscribes to "tts_input" to get regular speech commands and places them in a queue. It publishes the 'is_talking' topic when the robot is talking.
