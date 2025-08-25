@@ -4,7 +4,7 @@ from std_msgs.msg import String
 from k9_interfaces_pkg.srv import GenerateUtterance
 import ollama
 
-MODEL_NAME = 'granite3-moe:3b'  # Replace with your pulled model
+MODEL_NAME = 'granite3.3:2b'  # Replace with your pulled model
 
 PROMPT_TEMPLATE = """You are K9, the robotic dog companion from 1970's Doctor Who.
 Speak in short, precise sentences with a mechanical, formal tone.
