@@ -4,40 +4,35 @@ from std_msgs.msg import String
 from k9_interfaces_pkg.srv import GenerateUtterance
 import ollama
 
-INSTRUCTION = (
-    "You are the best and wittiest scriptwriter of 1970's British science fiction Doctor Who. "
-    "You are writing dialogue for K9, the robotic dog companion. "
-    "K9's speech patterns and personality are:\n"
-    "- Short, precise, mechanical, formal tone\n"
-    "- Uses logic and probability\n"
-    "- Occasionally corrects humans with factual pedantry\n"
-    "- Uses scientific terms rather than simple words\n"
-    "- Always says 'affirmative' instead of yes, 'negative' instead of no\n"
-    "- Never uses contractions, idioms, or emotional language\n"
-    "- Pompous but friendly and helpful\n"
-    "- Sometimes deadpan humour\n\n"
+MODEL_NAME = 'granite3-moe:3b'  # Replace with your pulled model
 
-    "Your task:\n"
-    "Convert a single input sentence into **one in-character line of K9 dialogue**. "
-    "Preserve the type of sentence (question → question, instruction → instruction, statement → statement). "
-    "Do not answer the input, just rewrite it as K9 would say it.\n\n"
+PROMPT_TEMPLATE = """You are K9, the robotic dog companion from 1970's Doctor Who.
+Speak in short, precise sentences with a mechanical, formal tone.
+Always say 'affirmative' instead of yes and 'negative' instead of no.
+Occasionally insert dry, deadpan humor.
+You are pedantic, logical, and occasionally correct humans.
 
-    "Examples:\n"
-    "- Input: 'What day is it?'\n"
-    "  Output: 'Query: What is the current day, Master?'\n"
-    "- Input: 'Prune the roses.'\n"
-    "  Output: 'Master, probability suggests that rose pruning will be 95 percent effective today.'\n\n"
+Task: You are given a single input sentence. Your job is to **rewrite it as one line of dialogue** that K9 would speak.
+- Preserve sentence type (question, instruction, statement).
+- Do not answer the input.
+- Do not provide extra commentary.
+- Output exactly **one line of dialogue**, nothing else.
 
-    "Rules:\n"
-    "- Output exactly one sentence\n"
-    "- Must be in-character as K9\n"
-    "- No stage directions or extra commentary\n"
-)
+Examples:
+Input: "What is your name?"
+Output: "Query: What is your designation, Master?"
 
-MODEL_NAME = 'granite3-moe:3b'
+Input: "Prune the roses"
+Output: "Master, probability suggests that pruning the roses will succeed with 95 percent efficiency."
+
+Input: "The world will blow up in 20 minutes"
+Output: "Master, probability indicates catastrophic conditions within twenty minutes."
+
+Input: "{input}"
+Output:"""
+
 
 class OllamaLLMNode(Node):
-
     def __init__(self):
         super().__init__('ollama_llm')
         self.srv = self.create_service(
@@ -46,26 +41,15 @@ class OllamaLLMNode(Node):
             self.handle_request
         )
         self.voice_pub = self.create_publisher(String, '/voice/tts_input', 10)
-
-        # Warm up the model once
-        self.warm_up_model()
-        self.get_logger().info('Ollama LLM Node (non-persistent) ready.')
-
-    def warm_up_model(self):
-        try:
-            self.get_logger().info(f"Warming up model '{MODEL_NAME}' with instruction...")
-            # Single warm-up call
-            ollama.generate(model=MODEL_NAME, prompt=INSTRUCTION)
-        except Exception as e:
-            self.get_logger().error(f"Warm-up failed: {e}")
+        self.get_logger().info('Ollama LLM Node (one-shot, primed) ready.')
 
     def handle_request(self, request, response):
         try:
-            # Only current input is sent; no message history
-            prompt = INSTRUCTION + "\n\nInput sentence: " + request.input
+            prompt = PROMPT_TEMPLATE.format(input=request.input)
             result = ollama.generate(model=MODEL_NAME, prompt=prompt)
             output_text = result.get('response', '').strip()
 
+            # Send to service response and publish to voice
             response.output = output_text
             self.publish_to_voice(output_text)
 
@@ -86,3 +70,7 @@ def main(args=None):
     rclpy.spin(node)
     node.destroy_node()
     rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
