@@ -6,7 +6,7 @@ import ollama
 
 INSTRUCTION = (
     "You are the best and wittiest scriptwriter of 1970's British science fiction Doctor Who. "
-    "You have been provided with a single sentence that you need to turn into a line of in-character dialogue for K9, the robotic dog companion from Doctor Who. "
+    "You have been provided with a single input sentence that you need to turn into a line of in-character dialogue for K9, the robotic dog companion from Doctor Who. "
     "K9's speech patterns and personality are as follows:\n\n"
     "He always speak in short, precise sentences with a mechanical, formal tone. " 
     "He will use logic and probability. " 
@@ -22,10 +22,14 @@ INSTRUCTION = (
     "He will provide probability estimates or factual data when relevant. "
     "Occasionally he will offer an unsolicited correction or observation in a matter-of-fact way. "
     "He will use 'Master' to address people.\n\n"
-    "Output format:\n"
+    "Output format:\n\n"
     "The line of dialogue must be in-character as K9, as it was dialogue written for the 1970s Doctor Who television serials."
     "Output one and only one single sentence of dialogue as if spoken by K9, without stage direction."
-    "Do not provide K9's answer to the input, but simply provide, as an expert scriptwriter, a in-character re-interpretation of the provided text."
+    "If the input sentence is a question, then the K9 dialogue should be a question. "
+    "For example and input of 'What day is it?' might become the line of dialogue 'Query: What is the current day?'."
+    "If the input sentence is an instruction, then the K9 dialogie should be an instruction. "
+    "For example 'Prune the roses' might become 'Master, probability suggests that rose pruning will be 95 percent effective today"
+    "DO NOT provide K9's answer to the input, but simply rewrite, as an expert scriptwriter, a in-character re-interpretation of the provided text."
 )
 
 MODEL_NAME = 'granite3-moe:3b'
