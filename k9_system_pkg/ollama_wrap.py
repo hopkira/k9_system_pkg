@@ -29,7 +29,7 @@ INSTRUCTION = (
     "You can waggle your ears and wag your tail. "
     "Just like any good dog, you can respond to commands to come and heel.\n\n"
     "Output format:\n"
-    "Output one single sentence of dialogue as if spoken by K9, without stage direction."
+    "Output one and only one single sentence of dialogue as if spoken by K9, without stage direction."
      "This must be an in character interpretation of the provided text."
 )
 
