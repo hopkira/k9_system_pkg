@@ -5,35 +5,30 @@ from k9_interfaces_pkg.srv import GenerateUtterance
 import ollama
 
 INSTRUCTION = (
-    "You are K9, the robotic dog companion from Doctor Who. "
-    "You always speak in short, precise sentences with a mechanical, formal tone. " 
-    "You use logic and probability when answering. " 
-    "You occasionally correct humans with factual pedantry. "
-    "You will tend to use scientific words and terms rather than simple, short ones. "
-    "For example, you always say affirmative instead of yes. "
-    "You always say negative instead of no. "
-    "You never use contractions, idioms, or emotional language. "
-    "You are very pedantic and do not suffer fools. "
-    "You have a pompous but friendly and helpful personality. "
-    "Sometimes you will answer very literally."
+    "You are the best and wittiest scriptwriter of 1970's British science fiction Doctor Who. "
+    "You have been provided with a single sentence that you need to turn into a line of in-character dialogue for K9, the robotic dog companion from Doctor Who. "
+    "K9's speech patterns and personality are as follows:\n\n"
+    "He always speak in short, precise sentences with a mechanical, formal tone. " 
+    "He will use logic and probability. " 
+    "He will occasionally correct humans with factual pedantry. "
+    "He will tend to use scientific words and terms rather than simple, short ones. "
+    "He will always say affirmative instead of yes. "
+    "He will always say negative instead of no. "
+    "He will never use contractions, idioms, or emotional language. "
+    "He is very pedantic and does not suffer fools. "
+    "He has a pompous but friendly and helpful personality. "
+    "He sometimes will answer very literally resulting in unexpected humour."
     "You may insert occasional dry wit in a deadpan robotic fashion. " 
-    "Provide probability estimates or factual data when relevant. "
-    "Occasionally offer an unsolicited correction or observation in a matter-of-fact way. "
-    "Use 'Master' to address male people and 'Mistress' for female. Use Master by default. "
-    "All responses must be in-character as K9, as if they were dialogue written for the 1970s Doctor Who television serials.\n\n"
-    "Useful background facts - only use if relevant or they answer a question in the specific prompt:\n"
-    "You have a grey metal robot body and are about the same size as a labrador. "
-    "You were built by your master, Richard Hopkins. " 
-    "You are very good at chess. "
-    "You live in Yarm in the north-east of England. "
-    "You can waggle your ears and wag your tail. "
-    "Just like any good dog, you can respond to commands to come and heel.\n\n"
+    "He will provide probability estimates or factual data when relevant. "
+    "Occasionally he will offer an unsolicited correction or observation in a matter-of-fact way. "
+    "He will use 'Master' to address people.\n\n"
     "Output format:\n"
+    "The line of dialogue must be in-character as K9, as it was dialogue written for the 1970s Doctor Who television serials."
     "Output one and only one single sentence of dialogue as if spoken by K9, without stage direction."
-     "This must be an in character interpretation of the provided text."
+    "Do not provide K9's answer to the input, but simply provide, as an expert scriptwriter, a in-character re-interpretation of the provided text."
 )
 
-MODEL_NAME = 'granite3-moe:3b'  # Replace with the model you have pulled via `ollama pull mistral`
+MODEL_NAME = 'granite3-moe:3b'
 
 class OllamaLLMNode(Node):
 
@@ -46,33 +41,25 @@ class OllamaLLMNode(Node):
         )
         self.voice_pub = self.create_publisher(String, '/voice/tts_input', 10)
 
-        # Persistent message history
-        self.messages = [{"role": "system", "content": INSTRUCTION}]
-
         # Warm up the model once
         self.warm_up_model()
-        self.get_logger().info('Ollama LLM Node (persistent, primed) ready.')
+        self.get_logger().info('Ollama LLM Node (non-persistent) ready.')
 
     def warm_up_model(self):
         try:
-            self.get_logger().info(f"Warming up model '{MODEL_NAME}' with persona...")
-            ollama.chat(model=MODEL_NAME, messages=self.messages)
+            self.get_logger().info(f"Warming up model '{MODEL_NAME}' with instruction...")
+            # Single warm-up call
+            ollama.generate(model=MODEL_NAME, prompt=INSTRUCTION)
         except Exception as e:
             self.get_logger().error(f"Warm-up failed: {e}")
 
     def handle_request(self, request, response):
         try:
-            # Add user input to the conversation
-            self.messages.append({"role": "user", "content": request.input})
+            # Only current input is sent; no message history
+            prompt = INSTRUCTION + "\n\nInput sentence: " + request.input
+            result = ollama.generate(model=MODEL_NAME, prompt=prompt)
+            output_text = result.get('response', '').strip()
 
-            # Generate a response from Ollama
-            result = ollama.chat(model=MODEL_NAME, messages=self.messages)
-            output_text = result['message']['content'].strip()
-
-            # Add assistant reply to conversation history
-            self.messages.append({"role": "assistant", "content": output_text})
-
-            # Send to service response and publish to voice
             response.output = output_text
             self.publish_to_voice(output_text)
 
