@@ -1,34 +1,47 @@
 # speech_to_text/speech_to_text.py
 import rclpy
+import threading
 from rclpy.node import Node
-from std_msgs.msg import String
+from std_msgs.msg import String, Empty
 from audio_common_msgs.msg import AudioData  # standard ROS audio message
-from faster_whisper import WhisperModel
 import numpy as np
 import queue
 
 class SpeechToText(Node):
     def __init__(self):
         super().__init__('speech_to_text')
+        self.get_logger().info("STT node starting...")
         self.state = 'NotListening'
-        self.sub_state = self.create_subscription(String, 'voice_state', self.state_callback, 10)
+
+        # Subscribe to hotword events
+        self.sub_hotword = self.create_subscription(
+            Empty,
+            '/hotword_detected',
+            self.hotword_callback,
+            10
+        )
+        self.get_logger().info("Subscribed to hotword_detected")
+
         self.sub_audio = self.create_subscription(AudioData, 'mic_audio', self.audio_callback, 10)
         self.pub = self.create_publisher(String, 'heard', 10)
 
         self.audio_queue = queue.Queue()
 
-        # Load whisper model once
-        self.model = WhisperModel("base", compute_type="int8")
-
         # Timer for periodic transcription
         self.timer = self.create_timer(0.5, self.process_audio)
 
-    def state_callback(self, msg):
-        self.state = msg.data
-        if self.state == 'Listening':
-            self.get_logger().info("Listening for speech...")
-        else:
-            self.get_logger().info(f"Voice state: {self.state}")
+        threading.Thread(target=self.load_whisper_model, daemon=True).start()
+
+    def load_whisper_model(self):
+        self.get_logger().info("Loading Whisper model in background...")
+        from faster_whisper import WhisperModel
+        self.model = WhisperModel("base", compute_type="int8")
+        self.get_logger().info("Whisper model loaded")
+
+
+    def hotword_callback(self, msg: Empty):
+        self.state = 'Listening'
+        self.get_logger().info("Hotword detected -> Listening...")
 
     def audio_callback(self, msg: AudioData):
         """Receives audio chunks from mic node (always running)."""

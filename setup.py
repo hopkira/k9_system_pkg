@@ -38,7 +38,7 @@ setup(
             'hotword = k9_system_pkg.hotword:main',
             'weather = k9_system_pkg.weather:main',
             'garden = k9_system_pkg.gardentasks:main',
-            'stt = k9_system_pkg.stt:main',
+            'k9_stt = k9_system_pkg.k9_stt_ros2:main',
             'face_detect = k9_system_pkg.face_detection:main',
         ],
     },

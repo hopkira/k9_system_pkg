@@ -31,7 +31,7 @@ class HotwordNode(Node):
             access_key=ACCESS_KEY,
             keyword_paths=[ppn_path]
         )
-        self.recorder = PvRecorder(device_index=-1, frame_length=self.porcupine.frame_length)
+        self.recorder = PvRecorder(device_index=0, frame_length=self.porcupine.frame_length)
         self.recorder.start()
 
         # Background thread
