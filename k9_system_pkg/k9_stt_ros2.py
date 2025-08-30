@@ -10,7 +10,7 @@ from rclpy.node import Node
 from std_msgs.msg import String
 from std_srvs.srv import Empty
 from audio_common_msgs.msg import AudioData
-
+from k9_interfaces_pkg.srv import EmptySrv
 
 class SpeechToTextNode(Node):
     def __init__(self):
@@ -54,8 +54,8 @@ class SpeechToTextNode(Node):
         self.text_pub = self.create_publisher(String, "/speech_to_text/text", 10)
         self.state_pub = self.create_publisher(String, "/speech_to_text/state", 10)
 
-        self.start_service = self.create_service(Empty, "start_listening", self.start_listening)
-        self.stop_service = self.create_service(Empty, "stop_listening", self.stop_listening)
+        self.start_service = self.create_service(EmptySrv, "start_listening", self.start_listening)
+        self.stop_service = self.create_service(EmptySrv, "stop_listening", self.stop_listening)
 
         self.audio_sub = self.create_subscription(
             AudioData,

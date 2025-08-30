@@ -7,11 +7,11 @@ import numpy as np
 from rclpy.node import Node
 from std_msgs.msg import Empty
 from audio_common_msgs.msg import AudioData
-from k9_system_pkg.srv import EmptySrv
 from ament_index_python.packages import get_package_share_directory
 
 import pvporcupine
 from pvrecorder import PvRecorder
+from k9_interfaces_pkg.srv import EmptySrv
 from k9_system_pkg.my_secrets import ACCESS_KEY
 
 package_path = get_package_share_directory('k9_system_pkg')
