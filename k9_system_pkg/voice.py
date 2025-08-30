@@ -25,7 +25,7 @@ class K9TTSNode(Node):
         # Subscribe to the topic for regular speech
         self.subscription = self.create_subscription(
             String,
-            'tts_input',
+            '/voice/tts_input',
             self.tts_callback,
             10)
 
