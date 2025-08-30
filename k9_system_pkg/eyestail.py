@@ -3,7 +3,7 @@
 import rclpy
 from rclpy.node import Node
 from std_srvs.srv import Trigger
-from std_msgs.msg import Bool
+from std_msgs.msg import Bool, String
 from k9_interfaces_pkg.srv import SetBrightness, GetBrightness
 import time
 
@@ -127,10 +127,12 @@ class EyesTailServiceNode(Node):
         self.get_logger().info("Eyes and Tail Node is running.")
 
         self._is_talking = False
+        self._is_listening = False
         self._stored_level = 0.0  # Saved level before talking began
 
         # Subscribers
         self.create_subscription(Bool, 'is_talking', self.talking_cb, 10)
+        self.create_subscription(String, '/speech_to_text/state', self.listening_cb, 10)
 
         # Services
         self.create_service(SetBrightness, 'eyes_set_level', self.set_level_cb)
@@ -148,14 +150,27 @@ class EyesTailServiceNode(Node):
         if msg.data and not self._is_talking:
             # Start talking: store previous level, set full brightness
             self._stored_level = self.eyestail.get_level()
-            self.eyestail.on()
+            self.eyestail.set_level(0.5)
             self._is_talking = True
-            self.get_logger().debug("Talking detected: eyes set to 100%")
+            self.get_logger().info("Talking detected: eyes set to 50%")
         elif not msg.data and self._is_talking:
             # Stop talking: restore previous level
             self.eyestail.set_level(self._stored_level)
             self._is_talking = False
-            self.get_logger().debug(f"Stopped talking: eyes restored to {self._stored_level:.2f}")
+            self.get_logger().info(f"Stopped talking: eyes restored to {self._stored_level:.2f}")
+
+    def listening_cb(self, msg: String):
+        if msg.data == "listening" and not self._is_listening:
+            # Start listening: store previous level, set full brightness
+            self._stored_level = self.eyestail.get_level()
+            self.eyestail.on()
+            self._is_listening = True
+            self.get_logger().info("Listening: eyes set to 100%")
+        elif msg.data == "not_listening" and self._is_listening:
+            # Stop talking: restore previous level
+            self.eyestail.set_level(self._stored_level)
+            self._is_listening = False
+            self.get_logger().info(f"Stopped listening: eyes restored to {self._stored_level:.2f}")
 
     # Service Callbacks
     def set_level_cb(self, request, response):
