@@ -22,14 +22,14 @@ class SpeechToTextNode(Node):
         self.declare_parameter("model_size", "tiny")
         self.declare_parameter("model_compute_type", "int8")
         self.declare_parameter("mic_audio_topic", "/mic_audio")
-        self.declare_parameter("max_listen_duration", 30.0)  # NEW PARAM
+        # self.declare_parameter("max_listen_duration", 30.0)  # Now handled by BT
 
         self.vad_aggressiveness = self.get_parameter("vad_aggressiveness").value
         self.silence_timeout = self.get_parameter("silence_timeout").value
         model_size = self.get_parameter("model_size").value
         compute_type = self.get_parameter("model_compute_type").value
         self.mic_audio_topic = self.get_parameter("mic_audio_topic").value
-        self.max_listen_duration = self.get_parameter("max_listen_duration").value
+        # self.max_listen_duration = self.get_parameter("max_listen_duration").value
 
         # --- Audio parameters ---
         self.SAMPLE_RATE = 16000
@@ -110,11 +110,12 @@ class SpeechToTextNode(Node):
                         if time.time() - self.last_voice_time >= self.silence_timeout:
                             self.speech_queue.put(np.array(self.speech_buffer, dtype=np.int16))
                             self.speech_buffer.clear()
-
+        ''' - Now handled by BT
         # Absolute timeout
         if self.listen_start_time and (time.time() - self.listen_start_time > self.max_listen_duration):
             self.get_logger().info("Max listening duration reached, stopping.")
             self.stop_listening(None, None)
+        '''
 
     # --- Transcription loop ---
     def transcription_loop(self):

@@ -23,57 +23,49 @@ class OllamaLLMNode(Node):
     def __init__(self):
         super().__init__('ollama_llm_node')
 
-        # ROS interfaces
-        self.voice_pub = self.create_publisher(String, '/voice/tts_input', 10)
+        # ROS service
         self.srv = self.create_service(
             GenerateUtterance,
             'generate_utterance',
             self.handle_service_request
         )
 
-        # Subscribe to STT output for automatic responses
-        self.create_subscription(String, '/speech_to_text/text', self.handle_stt_text, 10)
+        # Optional: auto responses to STT, do not return via service
+        # self.create_subscription(String, '/speech_to_text/text', self.handle_stt_text, 10)
 
         self.get_logger().info("Ollama LLM Node ready (service + subscriber).")
 
     def handle_service_request(self, request, response):
-        """Service callback: generate utterance for a given input string."""
-        threading.Thread(target=self._generate_and_publish, args=(request.input, response), daemon=True).start()
+        """Service callback: generate utterance and fill response."""
+        threading.Thread(target=self._generate_response, args=(request.input, response), daemon=True).start()
         return response  # Return immediately; response will be filled asynchronously
 
+    ''' - removed the non-service route for simplicity
     def handle_stt_text(self, msg: String):
-        """Subscriber callback: automatically respond to STT text."""
-        threading.Thread(target=self._generate_and_publish, args=(msg.data, None), daemon=True).start()
+        """Subscriber callback: automatically generate text for STT input (does not return service)."""
+        threading.Thread(target=self._generate_response, args=(msg.data, None), daemon=True).start()
+    '''
 
-    def _generate_and_publish(self, user_input: str, response=None):
-        """Internal method: call the LLM, publish to TTS, and optionally fill service response."""
+    def _generate_response(self, user_input: str, response=None):
+        """Internal method: call the LLM and optionally fill service response."""
         try:
             prompt = PROMPT_TEMPLATE.format(input=user_input)
             result = ollama.generate(model=MODEL_NAME, prompt=prompt)
-            output_text = getattr(result, 'response', '').strip()  # adjust if dict
+            output_text = getattr(result, 'response', '').strip()
 
-            if output_text:
-                self.publish_to_voice(output_text)
-                self.get_logger().info(f"Generated: {output_text}")
-                if response is not None:
-                    response.output = output_text
-            else:
-                fallback = "Apologies, my cognitive faculties are temporarily impaired."
-                self.publish_to_voice(fallback)
-                if response is not None:
-                    response.output = fallback
+            if not output_text:
+                output_text = "Apologies, my cognitive faculties are temporarily impaired."
+
+            self.get_logger().info(f"Generated: {output_text}")
+
+            if response is not None:
+                response.output = output_text
+
         except Exception as e:
             self.get_logger().error(f"LLM failure: {e}")
             fallback = "Apologies, my cognitive faculties are temporarily impaired."
-            self.publish_to_voice(fallback)
             if response is not None:
                 response.output = fallback
-
-    def publish_to_voice(self, text: str):
-        """Publish the generated text to the TTS topic."""
-        msg = String()
-        msg.data = text
-        self.voice_pub.publish(msg)
 
 def main(args=None):
     rclpy.init(args=args)

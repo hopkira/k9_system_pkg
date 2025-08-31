@@ -26,10 +26,12 @@ class HotwordNode(Node):
         self.hotword_pub = self.create_publisher(Empty, 'hotword_detected', 10)
         self.audio_pub = self.create_publisher(AudioData, 'mic_audio', 10)
 
+        '''
         # Service client to trigger STT listening
         self.start_listening_client = self.create_client(EmptySrv, 'start_listening')
         while not self.start_listening_client.wait_for_service(timeout_sec=1.0):
             self.get_logger().warn("Waiting for start_listening service...")
+        '''
 
         # Setup Porcupine + recorder
         self.porcupine = pvporcupine.create(
@@ -61,12 +63,13 @@ class HotwordNode(Node):
                 if result >= 0:
                     self.get_logger().info("Hotword detected!")
                     self.hotword_pub.publish(Empty())
-                    self.call_start_listening_service()
+                    # self.call_start_listening_service()
 
             except Exception as e:
                 self.get_logger().error(f"Detection error: {e}")
                 time.sleep(0.1)
 
+    ''' - Removing as this is now handled by Behaviour Tree
     def call_start_listening_service(self):
         """Call the STT node's start_listening service."""
         if self.start_listening_client.service_is_ready():
@@ -74,6 +77,7 @@ class HotwordNode(Node):
             self.start_listening_client.call_async(req)
         else:
             self.get_logger().warn("start_listening service not ready.")
+    '''
 
     def destroy_node(self):
         # Cleanup when node is shut down

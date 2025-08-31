@@ -17,10 +17,12 @@ class K9TTSNode(Node):
         model_path = "/home/hopkira/GitHub/k9_piper_voice/k9_2449_model.onnx"  # Update with your model path
         self.voice = PiperVoice.load(model_path)
 
+        '''  Removing to simplify; nodes should not depend on each other directly
         self.stt_not_listening_client = self.create_client(EmptySrv, 'stop_listening')
         self.get_logger().info("Waiting for STT 'stop_listening' service...")
         while not self.stt_not_listening_client.wait_for_service(timeout_sec=1.0):
             self.get_logger().info("Waiting for STT 'stop_listening' service...")
+        '''
 
         # Subscribe to the topic for regular speech
         self.subscription = self.create_subscription(
@@ -95,6 +97,7 @@ class K9TTSNode(Node):
         msg.data = is_talking
         self.publisher.publish(msg)
         self.get_logger().debug(f"Talking: {is_talking}")
+        ''' - Removing node to node dependency
         if is_talking:
             try:
                 req = EmptySrv.Request()
@@ -105,7 +108,8 @@ class K9TTSNode(Node):
                 else:
                     self.get_logger().warn("STT not_listening service call failed or returned negative result.")
             except Exception as e:
-                self.get_logger().error(f"Failed to call STT stop_listening service: {e}") 
+                self.get_logger().error(f"Failed to call STT stop_listening service: {e}")
+        ''' 
 
     def speak_now_callback(self, request, response):
         """Service callback to interrupt and immediately speak"""
