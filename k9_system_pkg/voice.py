@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import String, Bool
+from std_msgs.msg import String, Bool, Float32
 from k9_interfaces_pkg.srv import Speak, EmptySrv, CancelSpeech
 import threading
 import numpy as np
@@ -33,6 +33,7 @@ class K9TTSNode(Node):
 
         # Publisher for is_talking status
         self.publisher = self.create_publisher(Bool, 'is_talking', 10)
+        self.rms_pub = self.create_publisher(Float32, '/voice/rms_level', 10)
 
         # Create services for interrupting and canceling speech
         self.create_service(Speak, 'speak_now', self.speak_now_callback)
@@ -77,6 +78,11 @@ class K9TTSNode(Node):
 
             try:
                 for audio_bytes in self.voice.synthesize_stream_raw(text):
+                    int_data = np.frombuffer(audio_bytes, dtype=np.int16)
+                    rms = np.sqrt(np.mean(int_data.astype(np.float32)**2)) / 32768.0
+                    rms_msg = Float32()
+                    rms_msg.data = rms
+                    self.rms_pub.publish(rms_msg)
                     if self.interrupt_event.is_set():
                         self.get_logger().info("Speech interrupted.")
                         break
