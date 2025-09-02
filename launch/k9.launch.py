@@ -45,5 +45,15 @@ def generate_launch_description():
         )
         for name in node_names
     ]
+    
+    # Add the behavior tree node from k9_bt_pkg
+    k9_bt_node = Node(
+        package='k9_bt_pkg',
+        executable='k9_bt',        # <--- assumes you installed entry_point "k9_bt = k9_bt_pkg.k9_bt:main"
+        name='k9_bt',
+        output='both',
+        emulate_tty=True,
+        arguments=['--ros-args', '--log-level', log_level]
+    )
 
-    return LaunchDescription([log_level_arg] + nodes)
+    return LaunchDescription([log_level_arg] + nodes + [k9_bt_node])
