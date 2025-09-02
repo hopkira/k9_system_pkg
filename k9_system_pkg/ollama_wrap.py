@@ -1,76 +1,80 @@
+#!/usr/bin/env python3
+
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
 from k9_interfaces_pkg.srv import GenerateUtterance
+import threading
 import ollama
 
-MODEL_NAME = 'granite3.3:2b'  # Replace with your pulled model
+MODEL_NAME = 'granite3.3:2b'
 
-PROMPT_TEMPLATE = """You are K9, the robotic dog companion from 1970's Doctor Who.
-Speak in short, precise sentences with a mechanical, formal tone.
-Always say 'affirmative' instead of yes and 'negative' instead of no.
-Occasionally insert dry, deadpan humor.
-You are pedantic, logical, and occasionally correct humans.
-
-Task: You are given a single input sentence. Your job is to **rewrite it as one line of dialogue** that K9 would speak.
-- Preserve sentence type (question, instruction, statement).
-- Do not answer the input.
-- Do not provide extra commentary.
-- Output exactly **one line of dialogue**, nothing else.
-
-Examples:
-Input: "What is your name?"
-Output: "Query: What is your designation, Master?"
-
-Input: "Prune the roses"
-Output: "Master, probability suggests that pruning the roses will succeed with 95 percent efficiency."
-
-Input: "The world will blow up in 20 minutes"
-Output: "Master, probability indicates catastrophic conditions within twenty minutes."
-
-Input: "{input}"
-Output:"""
-
+PROMPT_TEMPLATE = (
+    "You are K9, the robotic dog from Doctor Who. "
+    "User says: {input}. "
+    "Reply in a single line of at most two short, precise sentences. "
+    "Use a mechanical, formal tone. "
+    "Say 'affirmative' instead of yes and 'negative' instead of no. "
+    "Be literal, logical, and occasionally dryly humorous. "
+    "Do not use contractions, idioms, or emotional language."
+)
 
 class OllamaLLMNode(Node):
     def __init__(self):
-        super().__init__('ollama_llm')
+        super().__init__('ollama_llm_node')
+
+        # ROS service
         self.srv = self.create_service(
             GenerateUtterance,
             'generate_utterance',
-            self.handle_request
+            self.handle_service_request
         )
-        self.voice_pub = self.create_publisher(String, '/voice/tts_input', 10)
-        self.get_logger().info('Ollama LLM Node (one-shot, primed) ready.')
 
-    def handle_request(self, request, response):
+        # Optional: auto responses to STT, do not return via service
+        # self.create_subscription(String, '/speech_to_text/text', self.handle_stt_text, 10)
+
+        self.get_logger().info("Ollama LLM Node ready (service + subscriber).")
+
+    def handle_service_request(self, request, response):
+        """Service callback: generate utterance and fill response."""
+        threading.Thread(target=self._generate_response, args=(request.input, response), daemon=True).start()
+        return response  # Return immediately; response will be filled asynchronously
+
+    ''' - removed the non-service route for simplicity
+    def handle_stt_text(self, msg: String):
+        """Subscriber callback: automatically generate text for STT input (does not return service)."""
+        threading.Thread(target=self._generate_response, args=(msg.data, None), daemon=True).start()
+    '''
+
+    def _generate_response(self, user_input: str, response=None):
+        """Internal method: call the LLM and optionally fill service response."""
         try:
-            prompt = PROMPT_TEMPLATE.format(input=request.input)
+            prompt = PROMPT_TEMPLATE.format(input=user_input)
             result = ollama.generate(model=MODEL_NAME, prompt=prompt)
-            output_text = result.get('response', '').strip()
+            output_text = getattr(result, 'response', '').strip()
 
-            # Send to service response and publish to voice
-            response.output = output_text
-            self.publish_to_voice(output_text)
+            if not output_text:
+                output_text = "Apologies, my cognitive faculties are temporarily impaired."
+
+            self.get_logger().info(f"Generated: {output_text}")
+
+            if response is not None:
+                response.output = output_text
 
         except Exception as e:
             self.get_logger().error(f"LLM failure: {e}")
-            response.output = "Apologies, my cognitive faculties are temporarily impaired."
-
-        return response
-
-    def publish_to_voice(self, text: str):
-        self.voice_pub.publish(String(data=text))
-        self.get_logger().info(f"Queued speech: {text}")
-
+            fallback = "Apologies, my cognitive faculties are temporarily impaired."
+            if response is not None:
+                response.output = fallback
 
 def main(args=None):
     rclpy.init(args=args)
     node = OllamaLLMNode()
-    rclpy.spin(node)
-    node.destroy_node()
-    rclpy.shutdown()
+    try:
+        rclpy.spin(node)
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
 
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

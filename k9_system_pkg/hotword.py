@@ -2,7 +2,6 @@ import rclpy
 import threading
 import time
 import os
-
 import numpy as np
 
 from rclpy.node import Node
@@ -12,6 +11,7 @@ from ament_index_python.packages import get_package_share_directory
 
 import pvporcupine
 from pvrecorder import PvRecorder
+from k9_interfaces_pkg.srv import EmptySrv
 from k9_system_pkg.my_secrets import ACCESS_KEY
 
 package_path = get_package_share_directory('k9_system_pkg')
@@ -26,12 +26,19 @@ class HotwordNode(Node):
         self.hotword_pub = self.create_publisher(Empty, 'hotword_detected', 10)
         self.audio_pub = self.create_publisher(AudioData, 'mic_audio', 10)
 
+        '''
+        # Service client to trigger STT listening
+        self.start_listening_client = self.create_client(EmptySrv, 'start_listening')
+        while not self.start_listening_client.wait_for_service(timeout_sec=1.0):
+            self.get_logger().warn("Waiting for start_listening service...")
+        '''
+
         # Setup Porcupine + recorder
         self.porcupine = pvporcupine.create(
             access_key=ACCESS_KEY,
             keyword_paths=[ppn_path]
         )
-        self.recorder = PvRecorder(device_index=-1, frame_length=self.porcupine.frame_length)
+        self.recorder = PvRecorder(device_index=0, frame_length=self.porcupine.frame_length)
         self.recorder.start()
 
         # Background thread
@@ -44,21 +51,33 @@ class HotwordNode(Node):
         while rclpy.ok():
             try:
                 pcm = self.recorder.read()  # list[int16]
-                pcm = np.array(pcm, dtype=np.int16)
-                # Publish audio for STT
+                pcm_np = np.array(pcm, dtype=np.int16)
+
+                # Publish audio for STT node
                 msg = AudioData()
-                msg.data = pcm.tobytes()  # convert to bytes
+                msg.data = pcm_np.tobytes()
                 self.audio_pub.publish(msg)
 
                 # Run hotword detection
-                result = self.porcupine.process(pcm)
+                result = self.porcupine.process(pcm_np)
                 if result >= 0:
                     self.get_logger().info("Hotword detected!")
                     self.hotword_pub.publish(Empty())
-                    # NOTE: mic stays open; STT node will react to voice_state
+                    # self.call_start_listening_service()
+
             except Exception as e:
                 self.get_logger().error(f"Detection error: {e}")
                 time.sleep(0.1)
+
+    ''' - Removing as this is now handled by Behaviour Tree
+    def call_start_listening_service(self):
+        """Call the STT node's start_listening service."""
+        if self.start_listening_client.service_is_ready():
+            req = EmptySrv.Request()
+            self.start_listening_client.call_async(req)
+        else:
+            self.get_logger().warn("start_listening service not ready.")
+    '''
 
     def destroy_node(self):
         # Cleanup when node is shut down
