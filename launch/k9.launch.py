@@ -28,7 +28,7 @@ def generate_launch_description():
         'calendar',
         'weather',
         'garden',
-        'stt',
+        'k9_stt',
         'face_detect',
         'hotword',
     ]
@@ -45,7 +45,7 @@ def generate_launch_description():
         )
         for name in node_names
     ]
-    
+
     # Add the behavior tree node from k9_bt_pkg
     k9_bt_node = Node(
         package='k9_bt_pkg',
