@@ -8,6 +8,10 @@ import json
 import math
 import time
 
+class SimEars:
+    """Class that communicates with simulated LIDAR ears"""
+
+
 class Ears:
     """Class that communicates with the Espruino controlling K9's LIDAR ears"""
 
@@ -20,15 +24,17 @@ class Ears:
                 parity=serial.PARITY_NONE,
                 stopbits=serial.STOPBITS_ONE,
                 bytesize=serial.EIGHTBITS,
-                timeout=10
+                timeout=0.5
             )
         except serial.SerialException as e:
-            self.get_logger().error(f"Failed to connect to ears: {e}")
+            self.node.get_logger().error(f"Failed to connect to ears: {e}")
             self.ser = None
         self.following = False
 
     def __write(self, text: str) -> None:
         self.node.get_logger().debug(f"Ears: {text}")
+        if not self.ser:
+            return
         self.ser.write(str.encode(text + "()\n"))
 
     def stop(self) -> None:
@@ -51,10 +57,14 @@ class Ears:
         if not self.following:
             self.__write("follow")
             self.following = True
-        json_reading = self.ser.readline().decode("ascii")
+        if not self.ser:
+            raise RuntimeError("Ears serial not connected")
+        json_reading = self.ser.readline().decode("ascii", errors="ignore").strip()
         reading = json.loads(json_reading)
-        return reading['distance']
+        return float(reading['distance'])
 
+    '''
+    Wrong place for this code, should now be at a higher level
     def safe_rotate(self) -> bool:
         safe_x = 0.3
         safe_y = 0.6
@@ -64,10 +74,14 @@ class Ears:
         end_scan = time.time() + duration
 
         while time.time() < end_scan and not detected:
-            json_reading = self.ser.readline().decode("ascii")
-            reading = json.loads(json_reading)
-            dist = reading['distance']
-            angle = reading['angle']
+            if not self.ser:
+                break
+            line = self.ser.readline().decode("ascii", errors="ignore").strip()
+            if not line:
+                continue
+            reading = json.loads(line)
+            dist = float(reading['distance'])
+            angle = float(reading['angle'])
             x = abs(dist * math.cos(angle))
             y = abs(dist * math.sin(angle))
             if x <= safe_x and y <= safe_y:
@@ -75,7 +89,7 @@ class Ears:
 
         self.__write("stop")
         return not detected
-
+    '''
 
 class EarsServiceNode(Node):
     def __init__(self):
@@ -89,7 +103,7 @@ class EarsServiceNode(Node):
         self.create_service(Trigger, 'ears_fast', self.fast_cb)
         self.create_service(Trigger, 'ears_think', self.think_cb)
         self.create_service(Trigger, 'ears_follow_read', self.follow_read_cb)
-        self.create_service(Trigger, 'ears_safe_rotate', self.safe_rotate_cb)
+        # self.create_service(Trigger, 'ears_safe_rotate', self.safe_rotate_cb)
 
     # Callbacks
     def stop_cb(self, request, response):
