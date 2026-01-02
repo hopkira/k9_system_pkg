@@ -1,15 +1,65 @@
 #!/usr/bin/env python3
 
+# ros2 run k9_system_pkg ears_service_node
+#
+# All services available via Trigger (ears_stop; ears_scan; ears_fast; ears_think; ears_follow
+#
+# ros2 service call /ears_fast std_srvs/srv/Trigger
+
 import rclpy
 from rclpy.node import Node
 from std_srvs.srv import Trigger
 import serial
 import json
 import math
-import time
+
+from std_msgs.msg import Float64
+from sensor_msgs.msg import LaserScan
 
 class SimEars:
-    """Class that communicates with simulated LIDAR ears"""
+    def __init__(self, node):
+        self.node = node
+
+        # Publishers to ear joints
+        self.l_pub = node.create_publisher(Float64, '/l_ear_joint/command', 10)
+        self.r_pub = node.create_publisher(Float64, '/r_ear_joint/command', 10)
+
+        # State
+        self.scanning = False
+        self.speed = 1.0
+        self.phase = 0.0
+
+        # Timer for sweep motion
+        self.timer = node.create_timer(0.05, self._update)
+
+    def _update(self):
+        if not self.scanning:
+            return
+
+        self.phase += 0.05 * self.speed
+
+        # Mirror motion, respecting joint limits
+        l_angle = 0.2 + 0.4 * math.sin(self.phase)
+        r_angle = -0.2 - 0.4 * math.sin(self.phase)
+
+        self.l_pub.publish(Float64(data=l_angle))
+        self.r_pub.publish(Float64(data=r_angle))
+
+    def stop(self):
+        self.scanning = False
+
+    def scan(self):
+        self.scanning = True
+        self.speed = 1.0
+
+    def fast(self):
+        self.scanning = True
+        self.speed = 2.0
+
+    def think(self):
+        self.scanning = True
+        self.speed = 0.4
+
 
 
 class Ears:
@@ -53,7 +103,7 @@ class Ears:
         self.following = False
         self.__write("think")
 
-    def follow_read(self) -> float:
+    def follow(self) -> float:
         if not self.following:
             self.__write("follow")
             self.following = True
@@ -94,6 +144,12 @@ class Ears:
 class EarsServiceNode(Node):
     def __init__(self):
         super().__init__('ears_service_node')
+
+        if self._in_sim():
+            self.ears = SimEars(self)
+        else:
+            self.ears = Ears(self)
+
         self.ears = Ears(self)
         self.get_logger().info("Ears Node is running.")
 
@@ -102,8 +158,11 @@ class EarsServiceNode(Node):
         self.create_service(Trigger, 'ears_scan', self.scan_cb)
         self.create_service(Trigger, 'ears_fast', self.fast_cb)
         self.create_service(Trigger, 'ears_think', self.think_cb)
-        self.create_service(Trigger, 'ears_follow_read', self.follow_read_cb)
+        self.create_service(Trigger, 'ears_follow', self.follow_cb)
         # self.create_service(Trigger, 'ears_safe_rotate', self.safe_rotate_cb)
+
+    def _in_sim(self):
+        return self.has_parameter('use_sim_time') and self.get_parameter('use_sim_time').value
 
     # Callbacks
     def stop_cb(self, request, response):
@@ -138,9 +197,9 @@ class EarsServiceNode(Node):
         self.get_logger().info(message)
         return response
 
-    def follow_read_cb(self, request, response):
+    def follow_cb(self, request, response):
         try:
-            dist = self.ears.follow_read()
+            dist = self.ears.follow()
             response.success = True
             message = f"Distance: {dist:.2f} m"
             response.message = message
