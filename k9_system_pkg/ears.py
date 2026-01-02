@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-# ros2 run k9_system_pkg ears_service_node
+# ros2 run k9_system_pkg ears
 #
 # All services available via Trigger (ears_stop; ears_scan; ears_fast; ears_think; ears_follow
 #
@@ -150,7 +150,6 @@ class EarsServiceNode(Node):
         else:
             self.ears = Ears(self)
 
-        self.ears = Ears(self)
         self.get_logger().info("Ears Node is running.")
 
         # Register services
