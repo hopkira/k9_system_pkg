@@ -145,10 +145,14 @@ class EarsServiceNode(Node):
     def __init__(self):
         super().__init__('ears_service_node')
 
+        self.declare_parameter('sim', False)
+
         if self._in_sim():
             self.ears = SimEars(self)
+            self.get_logger().info("Using SimEars backend")
         else:
             self.ears = Ears(self)
+            self.get_logger().info("Using hardware Ears backend")
 
         self.get_logger().info("Ears Node is running.")
 
@@ -158,10 +162,9 @@ class EarsServiceNode(Node):
         self.create_service(Trigger, 'ears_fast', self.fast_cb)
         self.create_service(Trigger, 'ears_think', self.think_cb)
         self.create_service(Trigger, 'ears_follow', self.follow_cb)
-        # self.create_service(Trigger, 'ears_safe_rotate', self.safe_rotate_cb)
 
     def _in_sim(self):
-        return self.has_parameter('use_sim_time') and self.get_parameter('use_sim_time').value
+        return self.get_parameter('sim').value
 
     # Callbacks
     def stop_cb(self, request, response):
