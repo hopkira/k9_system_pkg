@@ -2,51 +2,91 @@
 
 # ros2 run k9_system_pkg ears
 #
-# All services available via Trigger (ears_stop; ears_scan; ears_fast; ears_think; ears_follow
+# All services available via Trigger (ears_stop; ears_scan; ears_fast; ears_think
 #
 # ros2 service call /ears_fast std_srvs/srv/Trigger
 
 import rclpy
+import serial
+import math
 from rclpy.node import Node
 from std_srvs.srv import Trigger
-import serial
-import json
-import math
-
-from std_msgs.msg import Float64
-from sensor_msgs.msg import LaserScan
+from std_msgs.msg import Float64MultiArray
 
 class SimEars:
-    def __init__(self, node):
-        self.node = node
+    """
+    Sim ears backend for gz-sim + ros2_control.
+    Publishes to a ForwardCommandController:
+      /ears_position_controller/commands  (std_msgs/Float64MultiArray)
+    Joint order MUST match ear_controllers.yaml:
+      [l_ear_joint, r_ear_joint]
+    """
 
-        # Publishers to ear joints
-        self.l_pub = node.create_publisher(Float64, '/l_ear_joint/command', 10)
-        self.r_pub = node.create_publisher(Float64, '/r_ear_joint/command', 10)
+    def __init__(self, node, controller_name: str = "ears_position_controller"):
+        self.node = node
+        self.controller_name = controller_name
+
+        # ForwardCommandController command topic
+        self.cmd_topic = f'/{self.controller_name}/commands'
+        self.cmd_pub = node.create_publisher(Float64MultiArray, self.cmd_topic, 10)
 
         # State
         self.scanning = False
         self.speed = 1.0
         self.phase = 0.0
 
-        # Timer for sweep motion
-        self.timer = node.create_timer(0.05, self._update)
+        # Joint limits from your URDF
+        self.l_min, self.l_max = -0.2, 0.6
+        self.r_min, self.r_max = -0.6, 0.2
+
+        # Choose a center + amplitude that stays inside limits
+        self.l_center = 0.2
+        self.l_amp = 0.4   # 0.2 ± 0.4 => [-0.2, 0.6] perfect
+
+        # For r: center -0.2, amp 0.4 => [-0.6, 0.2] perfect
+        self.r_center = -0.2
+        self.r_amp = 0.4
+
+        # Timer for sweep motion (20 Hz)
+        self.dt = 0.05
+        self.timer = node.create_timer(self.dt, self._update)
+
+        node.get_logger().info(
+            f"SimEars publishing to {self.cmd_topic} as Float64MultiArray [l,r]"
+        )
+
+    def _clamp(self, v, lo, hi):
+        return max(lo, min(hi, v))
+
+    def _publish(self, l_angle: float, r_angle: float):
+        msg = Float64MultiArray()
+        msg.data = [float(l_angle), float(r_angle)]
+        self.cmd_pub.publish(msg)
 
     def _update(self):
         if not self.scanning:
             return
 
-        self.phase += 0.05 * self.speed
+        # phase advance controls sweep speed
+        self.phase += self.dt * self.speed
 
-        # Mirror motion, respecting joint limits
-        l_angle = 0.2 + 0.4 * math.sin(self.phase)
-        r_angle = -0.2 - 0.4 * math.sin(self.phase)
+        # Symmetric scan
+        s = math.sin(self.phase)
 
-        self.l_pub.publish(Float64(data=l_angle))
-        self.r_pub.publish(Float64(data=r_angle))
+        l_angle = self.l_center + self.l_amp * s
+        r_angle = self.r_center - self.r_amp * s   # opposite direction
+
+        # Safety clamp (should already be in-range)
+        l_angle = self._clamp(l_angle, self.l_min, self.l_max)
+        r_angle = self._clamp(r_angle, self.r_min, self.r_max)
+
+        self._publish(l_angle, r_angle)
 
     def stop(self):
         self.scanning = False
+        self.speed = 0.0
+        # hold at center when stopping (optional)
+        self._publish(self.l_center, self.r_center)
 
     def scan(self):
         self.scanning = True
@@ -103,56 +143,20 @@ class Ears:
         self.following = False
         self.__write("think")
 
-    def follow(self) -> float:
-        if not self.following:
-            self.__write("follow")
-            self.following = True
-        if not self.ser:
-            raise RuntimeError("Ears serial not connected")
-        json_reading = self.ser.readline().decode("ascii", errors="ignore").strip()
-        reading = json.loads(json_reading)
-        return float(reading['distance'])
-
-    '''
-    Wrong place for this code, should now be at a higher level
-    def safe_rotate(self) -> bool:
-        safe_x = 0.3
-        safe_y = 0.6
-        duration = 4
-        detected = False
-        self.__write("fast")
-        end_scan = time.time() + duration
-
-        while time.time() < end_scan and not detected:
-            if not self.ser:
-                break
-            line = self.ser.readline().decode("ascii", errors="ignore").strip()
-            if not line:
-                continue
-            reading = json.loads(line)
-            dist = float(reading['distance'])
-            angle = float(reading['angle'])
-            x = abs(dist * math.cos(angle))
-            y = abs(dist * math.sin(angle))
-            if x <= safe_x and y <= safe_y:
-                detected = True
-
-        self.__write("stop")
-        return not detected
-    '''
-
 class EarsServiceNode(Node):
     def __init__(self):
         super().__init__('ears_service_node')
 
+        # Declare + read sim param
         self.declare_parameter('sim', False)
+        sim = bool(self.get_parameter('sim').value)
 
-        if self._in_sim():
-            self.ears = SimEars(self)
+        if sim:
             self.get_logger().info("Using SimEars backend")
+            self.ears = SimEars(self, controller_name="ears_position_controller")
         else:
+            self.get_logger().info("Using real Ears backend (/dev/ears)")
             self.ears = Ears(self)
-            self.get_logger().info("Using hardware Ears backend")
 
         self.get_logger().info("Ears Node is running.")
 
@@ -161,10 +165,6 @@ class EarsServiceNode(Node):
         self.create_service(Trigger, 'ears_scan', self.scan_cb)
         self.create_service(Trigger, 'ears_fast', self.fast_cb)
         self.create_service(Trigger, 'ears_think', self.think_cb)
-        self.create_service(Trigger, 'ears_follow', self.follow_cb)
-
-    def _in_sim(self):
-        return self.get_parameter('sim').value
 
     # Callbacks
     def stop_cb(self, request, response):
@@ -197,34 +197,6 @@ class EarsServiceNode(Node):
         message = "Set to think mode."
         response.message = message
         self.get_logger().info(message)
-        return response
-
-    def follow_cb(self, request, response):
-        try:
-            dist = self.ears.follow()
-            response.success = True
-            message = f"Distance: {dist:.2f} m"
-            response.message = message
-            self.get_logger().info(message)
-        except Exception as e:
-            response.success = False
-            message = f"Error reading distance: {str(e)}"
-            response.message = message
-            self.get_logger().info(message)
-        return response
-
-    def safe_rotate_cb(self, request, response):
-        try:
-            safe = self.ears.safe_rotate()
-            response.success = safe
-            message = "Safe to rotate." if safe else "Obstacle detected."
-            response.message = message
-            self.get_logger().info(message)
-        except Exception as e:
-            response.success = False
-            message = f"Error during rotation check: {str(e)}"
-            response.message = message
-            self.get_logger().info(message)
         return response
 
 
