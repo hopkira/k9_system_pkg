@@ -31,6 +31,7 @@ def generate_launch_description():
         'k9_stt',
         'face_detect',
         'hotword',
+        'oak_points_frame_rewrite'
     ]
 
     # Create all nodes with shared logging config
