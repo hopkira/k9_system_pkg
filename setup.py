@@ -40,7 +40,6 @@ setup(
             'garden = k9_system_pkg.gardentasks:main',
             'k9_stt = k9_system_pkg.k9_stt_ros2:main',
             'face_detect = k9_system_pkg.face_detection:main',
-            'oak_points_frame_rewrite = k9_system_pkg.oak_points_frame_rewrite:main',
         ],
     },
 )
