@@ -52,76 +52,17 @@ flowchart LR
   %% Layer 1 — Drivers & Sensors
   %% =========================
   subgraph L1["Layer 1 — Drivers & Sensors"]
-    BASE[roboclaw_driver<br/>(or Gazebo base plugin)]
+    BASE[base_driver: RoboClaw or Gazebo]
     LD06[ld06_lidar_driver]
     EARS[ears_node]
     JOY[teleop_twist_joy]
   end
 
   %% =========================
-  %% Key Topics (explicit)
+  %% Key Topics
   %% =========================
-  CMDNAV[/cmd_vel_nav/]
-  CMDJOY[/cmd_vel_joy/]
-  CMDBEH[/cmd_vel_beh/]
-  CMD[/cmd_vel/]
-  SCAN[/scan/]
-  EARSCAN[/ears/scan/]
-  KCTX[/k9/context/]
-  SAY[/k9/say/]
-  NAVACT["Action: NavigateToPose"]
+  CMDNAV[/cmd]()
 
-  %% =========================
-  %% Behaviour & Speech Flow
-  %% =========================
-  BEH --> NAVACT --> BT
-  BEH -->|context strings| KCTX --> CTX --> LLM --> SAY --> VOICE
-
-  %% =========================
-  %% Nav2 & SLAM Flow
-  %% =========================
-  PL --> BT
-  CM --> CTRL
-  CTRL -->|publishes| CMDNAV
-  SCAN --> CM
-  TF --> CM
-  ODOM --> CTRL
-  TF --> CTRL
-
-  SCAN --> SLAM
-  ODOM --> SLAM
-  SLAM --> MAP
-  SLAM --> TF
-
-  %% =========================
-  %% Twist Multiplexing
-  %% =========================
-  CMDNAV --> MUX
-  CMDJOY --> MUX
-  CMDBEH --> MUX
-  MUX --> CMD
-
-  %% =========================
-  %% Base & Sensors
-  %% =========================
-  CMD --> BASE
-  BASE --> ODOM
-  BASE --> JS
-
-  JS --> RSP --> TF
-
-  LD06 --> SCAN
-  EARS --> EARSCAN
-  EARS --> JS
-
-  JOY --> CMDJOY
-
-  %% =========================
-  %% Behaviour subscriptions
-  %% =========================
-  EARSCAN --> BEH
-  SCAN --> BEH
-  TF --> BEH
 
 
 ## Back Lights and Side Screen
