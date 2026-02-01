@@ -123,7 +123,6 @@ flowchart LR
   SCAN --> BEH
   TF --> BEH
 
-'''
 
 ## Back Lights and Side Screen
 A node that:
