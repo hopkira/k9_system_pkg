@@ -7,6 +7,7 @@ These ROS 2 nodes work together to create a real robot K9 that can do everything
    * when your next Google Calendar appointment is
    * a list of tasks in the garden based on weather and month
 
+```mermaid
 flowchart LR
   %% =========================
   %% Layer 5 — Behaviours / Brain
@@ -122,7 +123,7 @@ flowchart LR
   SCAN --> BEH
   TF --> BEH
 
-
+'''
 
 ## Back Lights and Side Screen
 A node that:
