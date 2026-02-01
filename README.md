@@ -63,7 +63,7 @@ flowchart LR
   %% =========================
   CMDNAV[/cmd]()
 
-
+```
 
 ## Back Lights and Side Screen
 A node that:
