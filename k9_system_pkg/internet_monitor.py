@@ -3,27 +3,31 @@ import socket
 
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 from std_msgs.msg import Bool
 
 # Example usage in another node:
 #
 # from std_msgs.msg import Bool
+# from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 # self.internet_available = False
-# self.create_subscription(
-#    Bool,
-#    "/system/internet_available",
-#    self.internet_cb,
-#    10)
 #
-# def internet_cb(self, msg):
-#     self.internet_available = msg.data
+# qos_latched = QoSProfile(
+#     depth=1,
+#     reliability=ReliabilityPolicy.RELIABLE,
+#     durability=DurabilityPolicy.TRANSIENT_LOCAL,
+# )
 #
-# In logic:
+# self.create_subscription(Bool, 
+#   "/system/internet_available",
+#   _internet_cb,
+#   qos_latched
+#   )   
 #
-# if self.internet_available:
-#    call LLM, cloud API, Google Calendar, etc.
-# else:
-#    offline fallback
+#
+# def _internet_cb(self, msg: Bool):
+#      self.internet_available = bool(msg.data)
+#      self.internet_known = True
 
 class InternetMonitor(Node):
     def __init__(self):
@@ -40,6 +44,13 @@ class InternetMonitor(Node):
         self.port = self.get_parameter("port").value
         self.timeout = self.get_parameter("timeout").value
 
+        # "Latched" QoS in ROS 2 = transient local durability
+        qos_latched = QoSProfile(
+            depth=1,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+        )
+
         self.publisher = self.create_publisher(
             Bool,
             "/system/internet_available",
@@ -53,7 +64,7 @@ class InternetMonitor(Node):
 
         self.last_state = None  # Unknown at start
 
-        self.get_logger().info("Internet monitor started")
+        self.get_logger().info("Internet monitor started (latched QoS enabled)")
 
     def check_internet(self):
         online = self._can_connect()

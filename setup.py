@@ -27,6 +27,7 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
+            'internet_monitor = k9_system_pkg.internet_monitor:main',
             'back_lights = k9_system_pkg.back_lights:main',
             'ears = k9_system_pkg.ears:main',
             'eyestail = k9_system_pkg.eyestail:main',

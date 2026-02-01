@@ -19,6 +19,7 @@ def generate_launch_description():
 
     # List of all nodes in the package
     node_names = [
+        'internet_monitor',
         'context',
         'ollama',
         'back_lights',

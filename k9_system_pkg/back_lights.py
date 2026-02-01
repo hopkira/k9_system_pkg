@@ -3,7 +3,7 @@
 import rclpy
 from rclpy.node import Node
 from std_srvs.srv import Trigger
-from k9_interfaces_pkg.srv import LightsControl, SwitchState, BackLightCmd
+from k9_interfaces_pkg.srv import LightsControl, SwitchState, StringCommand
 import serial
 import ast
 
