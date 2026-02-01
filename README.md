@@ -7,6 +7,63 @@ These ROS 2 nodes work together to create a real robot K9 that can do everything
    * when your next Google Calendar appointment is
    * a list of tasks in the garden based on weather and month
 
+```mermaid
+flowchart LR
+  %% =========================
+  %% Layer 5 — Behaviours / Brain
+  %% =========================
+  subgraph L5["Layer 5 — Behaviours / Brain"]
+    BEH[k9_behavior_orchestrator]
+    CTX[k9_context_aggregator]
+    LLM[k9_ollama_service]
+    VOICE[k9_voice_node]
+  end
+
+  %% =========================
+  %% Layer 4 — Navigation & SLAM
+  %% =========================
+  subgraph L4["Layer 4 — Navigation / SLAM"]
+    BT[nav2_bt_navigator]
+    PL[nav2_planner_server]
+    CTRL[nav2_controller_server]
+    CM[nav2_costmaps]
+    SLAM[slam_toolbox]
+  end
+
+  %% =========================
+  %% Layer 3 — Robot State & TF
+  %% =========================
+  subgraph L3["Layer 3 — Robot State / TF"]
+    JS[/joint_states/]
+    RSP[robot_state_publisher]
+    TF[/tf/]
+    MAP[/map/]
+    ODOM[/odom/]
+  end
+
+  %% =========================
+  %% Layer 2 — Command Arbitration
+  %% =========================
+  subgraph L2["Layer 2 — Command Arbitration"]
+    MUX[twist_mux]
+  end
+
+  %% =========================
+  %% Layer 1 — Drivers & Sensors
+  %% =========================
+  subgraph L1["Layer 1 — Drivers & Sensors"]
+    BASE[base_driver: RoboClaw or Gazebo]
+    LD06[ld06_lidar_driver]
+    EARS[ears_node]
+    JOY[teleop_twist_joy]
+  end
+
+  %% =========================
+  %% Key Topics
+  %% =========================
+  CMDNAV[/cmd_vel_nav/]
+```
+
 ## Back Lights and Side Screen
 A node that:
 * turns lights on or off (back_lights_on; back_lights_off)
