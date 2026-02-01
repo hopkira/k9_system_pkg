@@ -61,7 +61,7 @@ flowchart LR
   %% =========================
   %% Key Topics
   %% =========================
-  CMDNAV[/cmd]()
+  CMDNAV[/cmd_vel_nav/]
 ```
 
 ## Back Lights and Side Screen
