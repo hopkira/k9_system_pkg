@@ -1,41 +1,51 @@
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
-from datetime import datetime
 
-# Usage:
-# ros2 launch k9_system_pkg k9.launch.py log_level:=debug
 
-def generate_launch_description():
-    # Launch argument for log level
-    log_level_arg = DeclareLaunchArgument(
-        'log_level',
-        default_value='info',
-        description='Logging level (debug, info, warn, error, fatal)'
-    )
+PI_NODES = [
+    'back_lights',
+    'ears',
+    'eyestail',
+    'voice',
+    'hotword',
+]
 
+ORIN_NODES = [
+    'internet_monitor',
+    'context',
+    'ollama',
+    'calendar',
+    'weather',
+    'garden',
+    'k9_stt',
+    'face_detect',
+]
+
+
+def launch_nodes(context):
+    platform = LaunchConfiguration('platform').perform(context)
     log_level = LaunchConfiguration('log_level')
 
-    # List of all nodes in the package
-    node_names = [
-        'internet_monitor',
-        'context',
-        'ollama',
-        'back_lights',
-        'ears',
-        'eyestail',
-        'voice',
-        'calendar',
-        'weather',
-        'garden',
-        'k9_stt',
-        'face_detect',
-        'hotword',
-        'logo_test',
-    ]
+    if platform == 'pi':
+        node_names = PI_NODES
+        run_bt = False
 
-    # Create all nodes with shared logging config
+    elif platform == 'orin':
+        node_names = ORIN_NODES
+        run_bt = True
+
+    elif platform == 'all':
+        node_names = PI_NODES + ORIN_NODES
+        run_bt = True
+
+    else:
+        raise RuntimeError(
+            f"Unknown platform '{platform}'. "
+            "Expected: pi, orin or all."
+        )
+
     nodes = [
         Node(
             package='k9_system_pkg',
@@ -43,19 +53,49 @@ def generate_launch_description():
             name=name,
             output='both',
             emulate_tty=True,
-            arguments=['--ros-args', '--log-level', log_level]
+            arguments=[
+                '--ros-args',
+                '--log-level',
+                log_level
+            ],
         )
         for name in node_names
     ]
 
-    # Add the behavior tree node from k9_bt_pkg
-    k9_bt_node = Node(
-        package='k9_bt_pkg',
-        executable='k9_bt',        # <--- assumes you installed entry_point "k9_bt = k9_bt_pkg.k9_bt:main"
-        name='k9_bt',
-        output='both',
-        emulate_tty=True,
-        arguments=['--ros-args', '--log-level', log_level]
-    )
+    if run_bt:
+        nodes.append(
+            Node(
+                package='k9_bt_pkg',
+                executable='k9_bt',
+                name='k9_bt',
+                output='both',
+                emulate_tty=True,
+                arguments=[
+                    '--ros-args',
+                    '--log-level',
+                    log_level
+                ],
+            )
+        )
 
-    return LaunchDescription([log_level_arg] + nodes + [k9_bt_node])
+    return nodes
+
+
+def generate_launch_description():
+
+    return LaunchDescription([
+        DeclareLaunchArgument(
+            'platform',
+            default_value='pi',
+            description='K9 computer role: pi, orin or all',
+        ),
+
+        DeclareLaunchArgument(
+            'log_level',
+            default_value='info',
+            description='Logging level: debug, info, warn, error, fatal',
+        ),
+
+        OpaqueFunction(function=launch_nodes),
+    ])
+
