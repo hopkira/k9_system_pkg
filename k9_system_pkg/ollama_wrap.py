@@ -1,17 +1,34 @@
 #!/usr/bin/env python3
 
+'''
+Pre-reqs
+
+Requires ollama API and Python Client.
+Advised to pre-download the granite3.3:2b model or similar
+sudo systemctl enable --now ollama
+ollama pull granite3.3:2b
+ollama pull granite3.3:2b
+python3 -m pip install --user --break-system-packages ollama
+
+After colcon build:
+source ~/k9_ws/install/setup.bash
+ros2 run k9_system_pkg ollama
+ros2 service list | grep generate_utterance
+ros2 service call /generate_utterance k9_interfaces_pkg/srv/GenerateUtterance "{input: 'Identify yourself and report your status.'}"
+'''
+
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import String
-from k9_interfaces_pkg.srv import GenerateUtterance
-import threading
+
 import ollama
 
-MODEL_NAME = 'granite3.3:2b'
+from k9_interfaces_pkg.srv import GenerateUtterance
 
-PROMPT_TEMPLATE = (
+
+DEFAULT_MODEL = 'granite3.3:2b'
+
+SYSTEM_PROMPT = (
     "You are K9, the robotic dog from Doctor Who. "
-    "User says: {input}. "
     "Reply in a single line of at most two short, precise sentences. "
     "Use a mechanical, formal tone. "
     "Say 'affirmative' instead of yes and 'negative' instead of no. "
@@ -19,62 +36,93 @@ PROMPT_TEMPLATE = (
     "Do not use contractions, idioms, or emotional language."
 )
 
+FALLBACK_RESPONSE = (
+    "Apologies, my cognitive faculties are temporarily impaired."
+)
+
+
 class OllamaLLMNode(Node):
+
     def __init__(self):
         super().__init__('ollama_llm_node')
 
-        # ROS service
-        self.srv = self.create_service(
-            GenerateUtterance,
-            'generate_utterance',
-            self.handle_service_request
+        self.declare_parameter('model', DEFAULT_MODEL)
+        self.model_name = (
+            self.get_parameter('model')
+            .get_parameter_value()
+            .string_value
         )
 
-        # Optional: auto responses to STT, do not return via service
-        # self.create_subscription(String, '/speech_to_text/text', self.handle_stt_text, 10)
+        self.service = self.create_service(
+            GenerateUtterance,
+            'generate_utterance',
+            self.handle_service_request,
+        )
 
-        self.get_logger().info("Ollama LLM Node ready (service + subscriber).")
+        self.get_logger().info(
+            f"Ollama LLM node ready using model {self.model_name}"
+        )
 
     def handle_service_request(self, request, response):
-        """Service callback: generate utterance and fill response."""
-        threading.Thread(target=self._generate_response, args=(request.input, response), daemon=True).start()
-        return response  # Return immediately; response will be filled asynchronously
+        """Generate and return an utterance synchronously."""
 
-    ''' - removed the non-service route for simplicity
-    def handle_stt_text(self, msg: String):
-        """Subscriber callback: automatically generate text for STT input (does not return service)."""
-        threading.Thread(target=self._generate_response, args=(msg.data, None), daemon=True).start()
-    '''
+        user_input = request.input.strip()
 
-    def _generate_response(self, user_input: str, response=None):
-        """Internal method: call the LLM and optionally fill service response."""
+        if not user_input:
+            response.output = "No input was supplied."
+            return response
+
+        self.get_logger().info(
+            f"Generating response for: {user_input}"
+        )
+
         try:
-            prompt = PROMPT_TEMPLATE.format(input=user_input)
-            result = ollama.generate(model=MODEL_NAME, prompt=prompt)
-            output_text = getattr(result, 'response', '').strip()
+            result = ollama.generate(
+                model=self.model_name,
+                system=SYSTEM_PROMPT,
+                prompt=user_input,
+                stream=False,
+                options={
+                    'temperature': 0.3,
+                    'num_predict': 80,
+                },
+            )
+
+            output_text = result.response.strip()
 
             if not output_text:
-                output_text = "Apologies, my cognitive faculties are temporarily impaired."
+                output_text = FALLBACK_RESPONSE
 
+            # Ensure accidental line breaks do not reach the speech node.
+            output_text = ' '.join(output_text.splitlines())
+
+            response.output = output_text
             self.get_logger().info(f"Generated: {output_text}")
 
-            if response is not None:
-                response.output = output_text
+        except Exception as error:
+            self.get_logger().error(
+                f"Ollama request failed: {error}"
+            )
+            response.output = FALLBACK_RESPONSE
 
-        except Exception as e:
-            self.get_logger().error(f"LLM failure: {e}")
-            fallback = "Apologies, my cognitive faculties are temporarily impaired."
-            if response is not None:
-                response.output = fallback
+        return response
+
 
 def main(args=None):
     rclpy.init(args=args)
     node = OllamaLLMNode()
+
     try:
         rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
 
-if __name__ == "__main__":
+        if rclpy.ok():
+            rclpy.shutdown()
+
+
+if __name__ == '__main__':
     main()
+

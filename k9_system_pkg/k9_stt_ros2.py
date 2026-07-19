@@ -19,11 +19,13 @@ class SpeechToTextNode(Node):
         # --- Parameters ---
         self.declare_parameter("vad_aggressiveness", 2)
         self.declare_parameter("silence_timeout", 1.0)
-        self.declare_parameter("model_size", "tiny")
+        self.declare_parameter("model_size", "tiny.en")
         self.declare_parameter("model_compute_type", "int8")
         self.declare_parameter("mic_audio_topic", "/mic_audio")
-        # self.declare_parameter("max_listen_duration", 30.0)  # Now handled by BT
+        self.declare_parameter("model_device", "cpu")
 
+        device = self.get_parameter("model_device").value
+        # self.declare_parameter("max_listen_duration", 30.0)  # Now handled by BT
         self.vad_aggressiveness = self.get_parameter("vad_aggressiveness").value
         self.silence_timeout = self.get_parameter("silence_timeout").value
         model_size = self.get_parameter("model_size").value
@@ -38,8 +40,16 @@ class SpeechToTextNode(Node):
 
         # --- VAD + Whisper ---
         self.vad = webrtcvad.Vad(self.vad_aggressiveness)
-        self.model = WhisperModel(model_size, compute_type=compute_type)
-
+        self.get_logger().info(
+            f"Loading Whisper model={model_size}, "
+            f"device={device}, compute_type={compute_type}"
+        )
+        self.model = WhisperModel(
+            model_size,
+            device=device,
+            compute_type=compute_type,
+            cpu_threads=4,
+        )
         # --- Buffers and state ---
         self.speech_buffer = []
         self.speech_queue = queue.Queue()

@@ -15,6 +15,8 @@ setup(
         (os.path.join('share', package_name, 'assets'), glob('assets/*')),
     ],
     install_requires=['setuptools',
+                      'ollama',
+                      'webrtcvad-wheels',
                       'faster-whisper',
                       'pvporcupine',
                       'pvrecorder',
