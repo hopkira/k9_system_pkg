@@ -423,6 +423,7 @@ class EyesTailServiceNode(Node):
 
     def horizontal_wag_steps(self) -> list[TailStep]:
         steps: list[TailStep] = []
+        steps.append(TailStep(5121, 5601, 0.25))
         for _ in range(4):
             steps.append(TailStep(5121, 5201, 0.25))
             steps.append(TailStep(5121, 7042, 0.25))
@@ -431,6 +432,7 @@ class EyesTailServiceNode(Node):
 
     def vertical_wag_steps(self) -> list[TailStep]:
         steps: list[TailStep] = []
+        steps.append(TailStep(5121, 5601, 0.25))
         for _ in range(4):
             steps.append(TailStep(5921, 5601, 0.25))
             steps.append(TailStep(4321, 5601, 0.25))
@@ -525,6 +527,7 @@ class EyesTailServiceNode(Node):
     def up_cb(self, request, response):
         del request
         self.start_tail_sequence([
+            TailStep(5121, 5601, 0.25),
             TailStep(4321, 5601, 0.25),
         ])
         response.success = not self._emergency_active
@@ -538,6 +541,7 @@ class EyesTailServiceNode(Node):
     def down_cb(self, request, response):
         del request
         self.start_tail_sequence([
+            TailStep(5121, 5601, 0.25),
             TailStep(5921, 5601, 0.25),
         ])
         response.success = not self._emergency_active
