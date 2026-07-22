@@ -35,7 +35,7 @@ setup(
             'ears = k9_system_pkg.ears:main',
             'eyestail = k9_system_pkg.eyestail:main',
             'k9_client = k9_system_pkg.k9_client:main',
-            'voice = k9_system_pkg.voice:main',
+            'voice_action = k9_system_pkg.voice_action:main',
             'context = k9_system_pkg.context:main',
             'ollama = k9_system_pkg.ollama_wrap:main',
             'calendar = k9_system_pkg.k9_calendar:main',

@@ -19,6 +19,10 @@
   <exec_depend>pvrecorder</exec_depend>
   <exec_depend>mediapipe</exec_depend>
 
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>k9_interfaces_pkg</exec_depend>
+
   <export>
     <build_type>ament_python</build_type>
   </export>
