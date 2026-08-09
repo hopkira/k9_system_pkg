@@ -100,13 +100,13 @@ class HotwordNode(Node):
         # ------------------------------------------------------------------
         # DEBUG
         # ------------------------------------------------------------------
-        self._frames_captured = 0
-        self._frames_published = 0
+        #self._frames_captured = 0
+        #self._frames_published = 0
 
-        self._debug_timer = self.create_timer(
-            2.0,
-            self._report_audio_stats,
-        )
+        #self._debug_timer = self.create_timer(
+        #    2.0,
+        #    self._report_audio_stats,
+        #)
 
         # ------------------------------------------------------------------
         # Resolve parameters
@@ -321,8 +321,8 @@ class HotwordNode(Node):
 
             while not self._stop_event.is_set():
                 frames, data = self._pcm.read()
-                if frames > 0:
-                    self._frames_captured += 1
+                #if frames > 0:
+                #    self._frames_captured += 1
                 if frames <= 0 or not data:
                     continue
 
@@ -431,7 +431,7 @@ class HotwordNode(Node):
             msg.channels = self.channels
             msg.samples = samples.tolist()
             self.audio_pub.publish(msg)
-            self._frames_published += 1
+            #self._frames_published += 1
 
 
         if self._stop_event.is_set() and not self._audio_thread.is_alive():
@@ -443,13 +443,15 @@ class HotwordNode(Node):
                     "Restart the hotword node after correcting the audio error."
                 )
 
-    def _report_audio_stats(self):
-        self.get_logger().info(
-            f"Audio stats: "
-            f"captured={self._frames_captured}, "
-            f"published={self._frames_published}, "
-            f"queue={self._audio_queue.qsize()}"
-        )
+    #----------------------------------------------------------------------
+    #def _report_audio_stats(self):
+    #    self.get_logger().info(
+    #        f"Audio stats: "
+    #        f"captured={self._frames_captured}, "
+    #        f"published={self._frames_published}, "
+    #        f"queue={self._audio_queue.qsize()}"
+    #     )
+    #----------------------------------------------------------------------
 
     # ----------------------------------------------------------------------
     # Shutdown
