@@ -237,7 +237,73 @@ clear_lower_priority: false
 Emergency handling should cancel the current action goal and also call `/cancel_speech` to clear any unrelated queued legacy/action requests.
 
 ## Hotword
-A node that is activated by a service call and then listens for the "canine" hotword. When it hears that word, it closes itself down and publishes to the 'hotword_detected' topic.
+A node that listens for the "canine" or "kay nine" hotword. When it hears that word, it publishes to the 'hotword_detected' topic.
+
+- The hotword node owns the CM108 microphone permanently.
+- Audio is captured once as 16 kHz, mono, signed 16-bit PCM.
+- Every captured frame is published on `/audio/raw`.
+- Sherpa-ONNX receives the same samples directly, without ROS serialization.
+- KWS is active only while `/audio/effective_state` is `WAITING_FOR_HOTWORD`.
+- A detection publishes exactly one `std_msgs/Bool(True)` on `/hotword_detected`.
+- The node then latches off until the effective audio state leaves
+  `WAITING_FOR_HOTWORD` and later returns.
+- The node never starts/stops STT and never changes conversation state.
+
+### Hotword Python dependencies
+
+Install these into THE SAME PYTHON ENVIRONMENT THAT RUNS ROS 2:
+
+```bash
+sudo apt install libasound2-dev python3-dev
+
+python -m pip install \
+  numpy \
+  pyalsaaudio \
+  sherpa-onnx \
+  sherpa-onnx-bin
+```
+### Testing
+Terminal 1:
+
+```bash
+ros2 run k9_system_pkg hotword \
+  --ros-args \
+  --params-file ~/k9_ws/src/k9_system_pkg/config/hotword.yaml
+```
+
+Terminal 2:
+
+```bash
+ros2 topic echo /hotword_detected
+```
+
+Terminal 3, verify PCM is flowing:
+
+```bash
+ros2 topic hz /audio/raw
+```
+
+With `frame_ms: 20`, expect approximately 50 messages/second.
+
+Say "K9" or "canine". The hotword topic should produce exactly one:
+
+```text
+data: true
+```
+
+The node is now latched, by design. You can re-arm manually before the BT is connected:
+
+```bash
+ros2 topic pub --once /audio/effective_state std_msgs/msg/String \
+  "{data: 'LISTENING'}"
+
+ros2 topic pub --once /audio/effective_state std_msgs/msg/String \
+  "{data: 'WAITING_FOR_HOTWORD'}"
+```
+
+Now another "K9" should generate one more event.
+
+No direct service call from HotwordNode to SpeechToText is required.
 
 ## Calendar
 A node that works with Google Calendar. It offers two services that announce the next appointment or the whole day's worth of appointments - or if there is an appointment in the next five minutes it will provide a reminder. Uses the topic subscribed to by the Voice node to make the announcements verbal.
