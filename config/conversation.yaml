@@ -1,0 +1,15 @@
+k9_conversation:
+  ros__parameters:
+    model: "k9"
+    ollama_url: "http://127.0.0.1:11434/api/chat"
+
+    accepted_intent: "GENERAL_CONVERSATION"
+
+    # Number of user/assistant exchanges retained.
+    max_history_turns: 8
+
+    # HTTP timeout, not desired generation duration.
+    timeout_seconds: 30.0
+
+    # Keep the model resident in GPU/unified memory between conversations.
+    keep_alive: "10m"
