@@ -193,6 +193,110 @@ ros2 service call /speak_now k9_interfaces_pkg/srv/Speak \
 ros2 service call /cancel_speech k9_interfaces_pkg/srv/CancelSpeech "{}"
 ```
 
+## Intent
+
+`k9_intent_pkg` subscribes to `/speech_to_text/text` and publishes a structured
+`k9_interfaces_pkg/msg/IntentResult` on `/intent/result`.
+
+It also publishes the intent name alone on `/intent/name` for command-line
+testing.
+
+The classifier is intentionally layered:
+
+1. Context-specific interpretation, currently chess setup.
+2. High-confidence executive command rules.
+3. Conservative `GENERAL_CONVERSATION` fallback.
+
+This prevents an uncertain sentence from unexpectedly moving the robot.
+
+### IntentResult.msg
+
+Fields in k9_interfaces:
+
+- `text`
+- `intent`
+- `confidence`
+- `requires_response`
+- `parameters_json`
+- `source`
+
+### Current intents
+
+- STOP_LISTENING
+- PLAY_CHESS
+- FOLLOW_ME
+- COME_HERE
+- STAY
+- TURN_ABOUT
+- SHOW_OFF
+- CHESS_SETUP_ANSWER
+- GENERAL_CONVERSATION
+
+### Context topic
+
+`/intent/context` is a temporary JSON String bridge until the Behaviour Tree
+publishes the relevant context directly.
+
+Example:
+
+```json
+{"chess_state":"SETUP","chess_setup_step":"WAIT_COLOUR"}
+```
+
+With that context, `White` becomes:
+
+```text
+intent: CHESS_SETUP_ANSWER
+parameters_json: {"colour":"WHITE","field":"colour"}
+```
+
+A sentence such as `Why does white move first in chess?` remains
+`GENERAL_CONVERSATION`, because it is not a valid colour-only setup answer.
+
+### Test without STT
+
+```bash
+ros2 topic echo /intent/result
+```
+
+Then:
+
+```bash
+ros2 topic pub --once /speech_to_text/text   std_msgs/msg/String "{data: 'Could you come here please?'}"
+```
+
+Expected intent: `COME_HERE`.
+
+```bash
+ros2 topic pub --once /speech_to_text/text   std_msgs/msg/String "{data: 'What is the largest planet?'}"
+```
+
+Expected intent: `GENERAL_CONVERSATION`.
+
+## Test chess context
+
+```bash
+ros2 topic pub --once /intent/context std_msgs/msg/String   "{data: '{"chess_state":"SETUP","chess_setup_step":"WAIT_COLOUR"}'}"
+```
+
+Then:
+
+```bash
+ros2 topic pub --once /speech_to_text/text   std_msgs/msg/String "{data: 'I will take black'}"
+```
+
+Expected:
+
+- intent: `CHESS_SETUP_ANSWER`
+- confidence: about `0.99`
+- parameters_json contains `"colour":"BLACK"`
+
+Clear context:
+
+```bash
+ros2 topic pub --once /intent/context   std_msgs/msg/String "{data: '{}'}"
+```
+
 ### Behaviour
 
 - One utterance owns the physical speaker at a time.
