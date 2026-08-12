@@ -12,6 +12,7 @@
 
   <!-- ROS dependencies -->
   <depend>rclpy</depend>
+  <depend>rcl_interfaces</depend>
   <depend>std_msgs</depend>
   <depend>k9_interfaces_pkg</depend>
   <depend>std_srvs</depend>
@@ -19,6 +20,9 @@
   <!-- Python/runtime dependencies -->
   <exec_depend>pvrecorder</exec_depend>
   <exec_depend>mediapipe</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>ament_index_python</exec_depend>
 
   <!-- Test dependencies -->
   <test_depend>ament_copyright</test_depend>

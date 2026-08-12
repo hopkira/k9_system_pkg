@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# The NeuTTS environment is intentionally isolated from the normal ROS Python
+# installation. Override this path if the venv is moved.
+VENV="${K9_NEUTTS_VENV:-$HOME/tts_env/neutts/.venv}"
+
+if [[ ! -x "$VENV/bin/python" ]]; then
+    echo "K9 NeuTTS venv Python not found: $VENV/bin/python" >&2
+    echo "Set K9_NEUTTS_VENV to the correct virtual environment." >&2
+    exit 1
+fi
+
+# ROS and the K9 workspace must already have been sourced by the parent shell
+# (or the launch environment). Their PYTHONPATH/AMENT_PREFIX_PATH values are
+# inherited by the venv Python.
+exec "$VENV/bin/python" -m k9_system_pkg.voice_neutts_node "$@"

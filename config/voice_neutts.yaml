@@ -1,0 +1,40 @@
+k9_tts_node:
+  ros__parameters:
+    # 0 selects 000.txt + k9_000.pt, 42 selects 042.txt + k9_042.pt, etc.
+    voice_id: 0
+    voice_dir: "~/tts_env/neutts/samples"
+
+    # Configuration benchmarked successfully on the Jetson Orin NX.
+    backbone_repo: "neuphonic/neutts-air-q4-gguf"
+    backbone_device: "cuda"
+    codec_repo: "neuphonic/neucodec-onnx-decoder-int8"
+    codec_device: "cpu"
+
+    # Empty uses NeuTTS-Air's model default. Do not force en-gb unless
+    # deliberately testing it; it degraded quality in our tests.
+    language: ""
+
+    # -1 selects a fresh seed for each utterance.
+    seed: -1
+    temperature: 1.0
+    top_k: 50
+
+    # 25 NeuTTS frames ~= 500 ms. This gave much better streaming headroom
+    # than the 300 ms and 200 ms experiments.
+    streaming_frames_per_chunk: 25
+
+    warmup_enabled: true
+    warmup_text: "Affirmative. Systems are functioning normally."
+
+    pipewire_executable: "pw-cat"
+    pipewire_target: ""
+    pipewire_latency_ms: 50
+    pipewire_volume: 1.0
+    tail_padding_ms: 250
+    playback_queue_chunks: 4
+
+    topic_priority: 20
+    speak_now_priority: 100
+    max_text_length: 4000
+    idle_poll_seconds: 0.1
+    publish_legacy_is_talking: true

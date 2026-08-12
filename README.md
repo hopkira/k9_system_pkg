@@ -109,89 +109,197 @@ ros2 service call /eyes_set_level k9_interfaces_pkg/srv/SetBrightness "{level: 0
 
 ## Voice
 
-This bundle converts the Piper voice node to a cancellable, priority-aware ROS 2 action server.
+This node uses NeuTTS voice cloning to provide K9's voice
 
-### Files
+### What are the main functions?
 
-- `k9_interfaces_pkg/action/SpeakText.action`
-- `k9_system_pkg/k9_system_pkg/voice_action_node.py`
-- build/package snippets for both packages
+Primary action:
 
-### Install
+    /voice/speak    k9_interfaces_pkg/action/SpeakText
 
-Copy the action file:
+Backwards compatibility:
 
-```bash
-cp k9_interfaces_pkg/action/SpeakText.action \
-  ~/k9_ws/src/k9_interfaces_pkg/action/SpeakText.action
-```
+    /voice/tts_input
+    /speak_now
+    /cancel_speech
 
-Copy the node:
+State/animation:
 
-```bash
-cp k9_system_pkg/k9_system_pkg/voice_action_node.py \
-  ~/k9_ws/src/k9_system_pkg/k9_system_pkg/voice_action_node.py
-chmod +x ~/k9_ws/src/k9_system_pkg/k9_system_pkg/voice_action_node.py
-```
+    /voice/is_talking
+    /is_talking              (optional legacy publication)
+    /voice/rms_level
 
-Apply the supplied CMakeLists, package.xml and setup.py additions, then build interfaces first:
 
-```bash
-cd ~/k9_ws
-source /opt/ros/jazzy/setup.bash
-colcon build --symlink-install --packages-select k9_interfaces_pkg
-source install/setup.bash
-colcon build --symlink-install --packages-select k9_system_pkg
-source install/setup.bash
-```
+### NeuTTS configuration
 
-Run:
+Default deployment settings are the ones that tested well on the Orin NX:
 
-```bash
-ros2 run k9_system_pkg voice_action
-```
+    backbone:       neuphonic/neutts-air-q4-gguf
+    backbone:       CUDA
+    codec:          neuphonic/neucodec-onnx-decoder-int8
+    codec device:   CPU
+    streaming:      25 frames ~= 500 ms
+    language:       model default
+    seed:           random per utterance
 
-### Test the action
+The model is loaded once and remains resident.
 
-Normal queued speech:
+A quiet startup warm-up is enabled, so K9's first real utterance should see
+warm rather than cold CUDA-graph behaviour.
 
-```bash
-ros2 action send_goal /voice/speak \
-  k9_interfaces_pkg/action/SpeakText \
-  "{text: 'Affirmative. Voice action server operational.', owner: 'test', priority: 50, interrupt_lower_priority: false, clear_lower_priority: false}" \
-  --feedback
-```
+### Voice references
 
-High-priority replacement speech:
+Set:
 
-```bash
-ros2 action send_goal /voice/speak \
-  k9_interfaces_pkg/action/SpeakText \
-  "{text: 'Emergency interruption test.', owner: 'test', priority: 200, interrupt_lower_priority: true, clear_lower_priority: true}" \
-  --feedback
-```
+    voice_id: 0..999
 
-Use `Ctrl+C` in the action client to request cancellation.
+For example voice_id 7 resolves to:
 
-Monitor eye-animation topics:
+    <voice_dir>/007.txt
+    <voice_dir>/k9_007.pt
 
-```bash
-ros2 topic echo /voice/is_talking
-ros2 topic echo /voice/rms_level
-ros2 topic hz /voice/rms_level
-```
+voice_id 244 resolves to:
 
-Legacy interfaces remain available during migration:
+    <voice_dir>/244.txt
+    <voice_dir>/k9_244.pt
 
-```bash
-ros2 topic pub --once /voice/tts_input std_msgs/msg/String \
-  "{data: 'Legacy queued speech test.'}"
+The default voice_dir is:
 
-ros2 service call /speak_now k9_interfaces_pkg/srv/Speak \
-  "{text: 'Legacy immediate speech test.'}"
+    ~/tts_env/neutts/samples
 
-ros2 service call /cancel_speech k9_interfaces_pkg/srv/CancelSpeech "{}"
-```
+Changing voice_id at runtime is supported:
+
+    ros2 param set /k9_tts_node voice_id 42
+
+The change is rejected if either 042.txt or k9_042.pt does not exist. An
+utterance already active keeps the reference with which it started; the next
+utterance uses the selected ID.
+
+Reference files are cached, but modification times are checked, so replacing a
+.pt or .txt file causes it to be reloaded automatically on the next use.
+
+### Virtual environment
+
+NeuTTS remains in its own venv. The default is the environment already used
+during testing:
+
+    ~/tts_env/neutts/.venv
+
+The ROS executable is a bash launcher. It executes:
+
+    $K9_NEUTTS_VENV/bin/python -m k9_system_pkg.voice_neutts_node
+
+If K9's venv moves:
+
+    export K9_NEUTTS_VENV=/some/other/.venv
+
+The shell launching ROS must still source ROS 2 and the K9 workspace so the
+venv Python inherits ROS's PYTHONPATH and AMENT_PREFIX_PATH:
+
+    source /opt/ros/jazzy/setup.bash
+    source ~/k9_ws/install/setup.bash
+
+The launch file also has a neutts_venv argument.
+
+Check the environment with:
+
+    ./check_neutts_venv.sh
+
+### Run
+
+Default voice 000:
+
+    ros2 launch k9_system_pkg voice_neutts.launch.py
+
+Voice 042:
+
+    ros2 launch k9_system_pkg voice_neutts.launch.py voice_id:=42
+
+Explicit venv:
+
+    ros2 launch k9_system_pkg voice_neutts.launch.py \
+      voice_id:=42 \
+      neutts_venv:=/home/hopkira/tts_env/neutts/.venv
+
+Or with ros2 run:
+
+    ros2 run k9_system_pkg voice_neutts --ros-args \
+      --params-file \
+      ~/k9_ws/src/k9_system_pkg/config/voice_neutts.yaml
+
+### Test normal speech
+
+    ros2 action send_goal /voice/speak \
+      k9_interfaces_pkg/action/SpeakText \
+      "{text: 'Affirmative. Voice systems are operational.', owner: 'test', priority: 50, interrupt_lower_priority: false, clear_lower_priority: false}" \
+      --feedback
+
+### Test high-priority pre-emption
+
+Start a long low-priority utterance, then:
+
+    ros2 action send_goal /voice/speak \
+      k9_interfaces_pkg/action/SpeakText \
+      "{text: 'Priority interruption.', owner: 'test', priority: 200, interrupt_lower_priority: true, clear_lower_priority: true}" \
+      --feedback
+
+The active pw-cat process is terminated immediately. NeuTTS may take up to the
+current generation chunk to return control, after which the replacement starts.
+
+### Test global cancellation
+
+    ros2 service call /cancel_speech \
+      k9_interfaces_pkg/srv/CancelSpeech "{}"
+
+### Legacy speak_now
+
+    ros2 service call /speak_now \
+      k9_interfaces_pkg/srv/Speak \
+      "{text: 'Affirmative, Master.'}"
+
+### Observe state
+
+    ros2 topic echo /voice/is_talking
+    ros2 topic echo /voice/rms_level
+
+### Streaming implementation
+
+NeuTTS generation and playback are deliberately decoupled:
+
+    NeuTTS infer_stream()
+             |
+             v
+      bounded audio queue
+             |
+             v
+      persistent pw-cat process
+             |
+             v
+         PipeWire sink
+
+This prevents a blocking audio write from stopping generation of the next
+chunk. A single pw-cat process is kept open for the whole utterance, avoiding
+gaps caused by starting a player for every chunk.
+
+The node logs TTFA and synthesis RTF after every completed utterance.
+
+## PipeWire
+
+Raw mono 16-bit PCM is streamed to pw-cat at NeuTTS' 24 kHz sample rate.
+
+The default target is automatic. To select a particular PipeWire sink, set
+pipewire_target in voice_neutts.yaml to its node name or object serial.
+
+## Notes
+
+- Only voice_id is dynamically mutable. Model/backend/audio configuration is
+  startup-only because NeuTTS is deliberately kept resident.
+- The default language is intentionally left empty so NeuTTS-Air chooses its
+  own trained default rather than forcing en-gb.
+- seed=-1 means each utterance gets a fresh NeuTTS seed.
+- 500 ms synthesis chunks are retained because the Orin tests showed much
+  better post-first-chunk real-time margin than 300 ms or 200 ms.
+
 
 ## Intent
 
