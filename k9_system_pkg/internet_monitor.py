@@ -5,6 +5,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 from std_msgs.msg import Bool
+from rclpy.executors import ExternalShutdownException
 
 # Example usage in another node:
 #
@@ -89,14 +90,20 @@ class InternetMonitor(Node):
         except Exception:
             return False
 
-
-def main():
-    rclpy.init()
+def main(args=None):
+    rclpy.init(args=args)
     node = InternetMonitor()
-    rclpy.spin(node)
-    node.destroy_node()
-    rclpy.shutdown()
+
+    try:
+        rclpy.spin(node)
+
+    except (KeyboardInterrupt, ExternalShutdownException):
+        print("Internet monitor shutting down", flush=True)
+
+    finally:
+        node.destroy_node()
+        rclpy.try_shutdown()
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
