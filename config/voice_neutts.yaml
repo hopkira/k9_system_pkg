@@ -1,7 +1,7 @@
 k9_tts_node:
   ros__parameters:
     # 0 selects 000.txt + k9_000.pt, 42 selects 042.txt + k9_042.pt, etc.
-    voice_id: 0
+    voice_id: 43
     voice_dir: "~/tts_env/neutts/samples"
 
     # Configuration benchmarked successfully on the Jetson Orin NX.

@@ -162,7 +162,7 @@ def generate_launch_description():
 
         DeclareLaunchArgument(
             'voice_id',
-            default_value='0',
+            default_value='43',
             description='NeuTTS voice reference ID (0..999)',
         ),
 
