@@ -8,11 +8,6 @@ State/animation topics:
     /voice/is_talking         std_msgs/msg/Bool
     /voice/rms_level          std_msgs/msg/Float32
 
-Compatibility interfaces:
-    /voice/tts_input          std_msgs/msg/String
-    /speak_now                k9_interfaces_pkg/srv/Speak
-    /cancel_speech            k9_interfaces_pkg/srv/CancelSpeech
-
 Voice selection:
     voice_id: 0..999
 
@@ -46,6 +41,7 @@ import torch
 from neutts import NeuTTS
 from rcl_interfaces.msg import SetParametersResult
 from rclpy.action import ActionServer, CancelResponse, GoalResponse
+
 from rclpy.action.server import ServerGoalHandle
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
@@ -54,7 +50,8 @@ from rclpy.parameter import Parameter
 from std_msgs.msg import Bool, Float32, String
 
 from k9_interfaces_pkg.action import SpeakText
-from k9_interfaces_pkg.srv import CancelSpeech, Speak
+
+
 
 
 class JobState(Enum):
@@ -326,20 +323,6 @@ class K9NeuTTSVoiceNode(Node):
             "/voice/tts_input",
             self.tts_callback,
             10,
-            callback_group=self.callback_group,
-        )
-
-        self.create_service(
-            Speak,
-            "/speak_now",
-            self.speak_now_callback,
-            callback_group=self.callback_group,
-        )
-
-        self.create_service(
-            CancelSpeech,
-            "/cancel_speech",
-            self.cancel_speech_callback,
             callback_group=self.callback_group,
         )
 
@@ -677,47 +660,6 @@ class K9NeuTTSVoiceNode(Node):
         )
         self._enqueue_job(job)
 
-    def speak_now_callback(
-        self,
-        request: Speak.Request,
-        response: Speak.Response,
-    ):
-        text = request.text.strip()
-        if not text:
-            response.success = False
-            response.message = "Empty text"
-            return response
-
-        job = self._new_job(
-            key=self._next_legacy_key("service"),
-            text=text,
-            owner="legacy_speak_now",
-            priority=self._speak_now_priority,
-            interrupt_lower_priority=True,
-            clear_lower_priority=True,
-        )
-        self._enqueue_job(job)
-
-        response.success = True
-        response.message = (
-            "Speech accepted; latest high-priority request wins"
-        )
-        return response
-
-    def cancel_speech_callback(
-        self,
-        request: CancelSpeech.Request,
-        response: CancelSpeech.Response,
-    ):
-        del request
-        cancelled = self.cancel_all_speech(
-            "Cancelled through /cancel_speech"
-        )
-        response.success = True
-        response.message = (
-            f"Cancellation requested for {cancelled} speech job(s)"
-        )
-        return response
 
     # ------------------------------------------------------------------
     # Queue and pre-emption
