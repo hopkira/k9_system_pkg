@@ -13,12 +13,12 @@ PI_NODES = [
     'back_lights',
     'ears',
     'eyestail',
-    'voice',
 ]
 
 JETSON_NODES = [
     'hotword',
     'k9_stt',
+    'voice',
 ]
 
 
