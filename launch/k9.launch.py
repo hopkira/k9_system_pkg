@@ -19,24 +19,13 @@ PI_NODES = [
 JETSON_NODES = [
     'hotword',
     'k9_stt',
-    'voice',
+    'voice_neutts',
 ]
 
 
 def launch_nodes(context):
     platform = LaunchConfiguration('platform').perform(context)
     log_level = LaunchConfiguration('log_level')
-
-    voice_neutts_config = os.path.join(
-    system_pkg_share,
-    'config',
-    'voice_neutts.yaml',
-    )
-    voice_id = LaunchConfiguration('voice_id')
-
-    neutts_venv = LaunchConfiguration(
-        'neutts_venv'
-    ).perform(context)
 
     if platform == 'pi':
         node_names = PI_NODES
@@ -53,11 +42,22 @@ def launch_nodes(context):
     else:
         raise RuntimeError(
             f"Unknown platform '{platform}'. "
-            "Expected: pi, orin or all."
+            "Expected: pi, jetson or all."
         )
 
     # Installed location of k9_system_pkg
     system_pkg_share = get_package_share_directory('k9_system_pkg')
+
+    voice_neutts_config = os.path.join(
+        system_pkg_share,
+        'config',
+        'voice_neutts.yaml',
+        )
+    voice_id = LaunchConfiguration('voice_id')
+
+    neutts_venv = LaunchConfiguration(
+        'neutts_venv'
+    ).perform(context)
 
     hotword_config = os.path.join(
         system_pkg_share,
@@ -99,8 +99,11 @@ def launch_nodes(context):
                     + os.pathsep
                     + existing_pythonpath
                 )
-        }
-
+            }
+            # Hotword is a fundamental sensor node.
+            # Restart it automatically if ALSA/Sherpa fails.
+            node_args['respawn'] = True
+            node_args['respawn_delay'] = 2.0
 
         if name == 'voice_neutts':
 
@@ -119,29 +122,24 @@ def launch_nodes(context):
             node_args['additional_env'] = {
                 'K9_NEUTTS_VENV': neutts_venv,
             }
-
-        if run_bt:
-            nodes.append(
-                Node(
-                    package='k9_bt_pkg',
-                    executable='k9_bt',
-                    name='k9_bt',
-                    output='both',
-                    emulate_tty=True,
-                    arguments=[
-                        '--ros-args',
-                        '--log-level',
-                        log_level,
-                    ],
-                )
-            )
-
-        # Hotword is a fundamental sensor node.
-        # Restart it automatically if ALSA/Sherpa fails.
-        node_args['respawn'] = True
-        node_args['respawn_delay'] = 2.0
-
+            
         nodes.append(Node(**node_args))
+
+    if run_bt:
+        nodes.append(
+            Node(
+                package='k9_bt_pkg',
+                executable='k9_bt',
+                name='k9_bt',
+                output='both',
+                emulate_tty=True,
+                arguments=[
+                    '--ros-args',
+                    '--log-level',
+                    log_level,
+                ],
+            )
+        )
 
 
     return nodes
