@@ -3,6 +3,7 @@ from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from ament_index_python.packages import get_package_share_directory
+from launch_ros.parameter_descriptions import ParameterValue
 import os
 
 K9_VENV_SITE_PACKAGES = os.path.expanduser(
@@ -25,6 +26,17 @@ JETSON_NODES = [
 def launch_nodes(context):
     platform = LaunchConfiguration('platform').perform(context)
     log_level = LaunchConfiguration('log_level')
+
+    voice_neutts_config = os.path.join(
+    system_pkg_share,
+    'config',
+    'voice_neutts.yaml',
+    )
+    voice_id = LaunchConfiguration('voice_id')
+
+    neutts_venv = LaunchConfiguration(
+        'neutts_venv'
+    ).perform(context)
 
     if platform == 'pi':
         node_names = PI_NODES
@@ -87,31 +99,50 @@ def launch_nodes(context):
                     + os.pathsep
                     + existing_pythonpath
                 )
-            }	
+        }
 
 
-            # Hotword is a fundamental sensor node.
-            # Restart it automatically if ALSA/Sherpa fails.
-            node_args['respawn'] = True
-            node_args['respawn_delay'] = 2.0
+        if name == 'voice_neutts':
+
+            node_args['name'] = 'k9_tts_node'
+
+            node_args['parameters'] = [
+                voice_neutts_config,
+                {
+                    'voice_id': ParameterValue(
+                        voice_id,
+                        value_type=int,
+                    )
+                },
+            ]
+
+            node_args['additional_env'] = {
+                'K9_NEUTTS_VENV': neutts_venv,
+            }
+
+        if run_bt:
+            nodes.append(
+                Node(
+                    package='k9_bt_pkg',
+                    executable='k9_bt',
+                    name='k9_bt',
+                    output='both',
+                    emulate_tty=True,
+                    arguments=[
+                        '--ros-args',
+                        '--log-level',
+                        log_level,
+                    ],
+                )
+            )
+
+        # Hotword is a fundamental sensor node.
+        # Restart it automatically if ALSA/Sherpa fails.
+        node_args['respawn'] = True
+        node_args['respawn_delay'] = 2.0
 
         nodes.append(Node(**node_args))
 
-    if run_bt:
-        nodes.append(
-            Node(
-                package='k9_bt_pkg',
-                executable='k9_bt',
-                name='k9_bt',
-                output='both',
-                emulate_tty=True,
-                arguments=[
-                    '--ros-args',
-                    '--log-level',
-                    log_level,
-                ],
-            )
-        )
 
     return nodes
 
@@ -129,6 +160,20 @@ def generate_launch_description():
             'log_level',
             default_value='info',
             description='Logging level: debug, info, warn, error, fatal',
+        ),
+
+        DeclareLaunchArgument(
+            'voice_id',
+            default_value='0',
+            description='NeuTTS voice reference ID (0..999)',
+        ),
+
+        DeclareLaunchArgument(
+            'neutts_venv',
+            default_value=os.path.expanduser(
+                '~/tts_env/neutts/.venv'
+            ),
+            description='Python virtual environment containing NeuTTS',
         ),
 
         OpaqueFunction(function=launch_nodes),
