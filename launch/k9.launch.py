@@ -5,6 +5,9 @@ from launch_ros.actions import Node
 from ament_index_python.packages import get_package_share_directory
 import os
 
+K9_VENV_SITE_PACKAGES = os.path.expanduser(
+    '~/k9_venv/lib/python3.12/site-packages'
+)
 
 PI_NODES = [
     'back_lights',
@@ -76,6 +79,16 @@ def launch_nodes(context):
         # Node-specific configuration
         if name == 'hotword':
             node_args['parameters'] = [hotword_config]
+            existing_pythonpath = os.environ.get('PYTHONPATH', '')
+
+            node_args['additional_env'] = {
+                'PYTHONPATH': (
+                    K9_VENV_SITE_PACKAGES
+                    + os.pathsep
+                    + existing_pythonpath
+                )
+            }	
+
 
             # Hotword is a fundamental sensor node.
             # Restart it automatically if ALSA/Sherpa fails.
