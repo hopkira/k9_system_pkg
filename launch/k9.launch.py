@@ -13,16 +13,9 @@ PI_NODES = [
     'voice',
 ]
 
-ORIN_NODES = [
+JETSON_NODES = [
     'hotword',
-    'internet_monitor',
-    'context',
-    'ollama',
-    'calendar',
-    'weather',
-    'garden',
     'k9_stt',
-    'face_detect',
 ]
 
 
@@ -34,12 +27,12 @@ def launch_nodes(context):
         node_names = PI_NODES
         run_bt = False
 
-    elif platform == 'orin':
-        node_names = ORIN_NODES
+    elif platform == 'jetson':
+        node_names = JETSON_NODES
         run_bt = True
 
     elif platform == 'all':
-        node_names = PI_NODES + ORIN_NODES
+        node_names = JETSON_NODES + PI_NODES
         run_bt = True
 
     else:
@@ -61,9 +54,14 @@ def launch_nodes(context):
 
     for name in node_names:
 
+        package = (
+            'k9_stt_pkg'
+            if name == 'k9_stt'
+            else 'k9_system_pkg')
+
         # Common settings for every K9 system node
         node_args = {
-            'package': 'k9_system_pkg',
+            'package': package,
             'executable': name,
             'name': name,
             'output': 'both',
@@ -111,7 +109,7 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'platform',
             default_value='pi',
-            description='K9 computer role: pi, orin or all',
+            description='K9 computer role: pi, jetson or all',
         ),
 
         DeclareLaunchArgument(

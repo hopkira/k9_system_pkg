@@ -5,7 +5,7 @@ hotword:
     #
     # Replace it with a stable named ALSA device from `arecord -L`
     # once you have confirmed the CM108's persistent card name.
-    audio_device: "plughw:0,0"
+    audio_device: "plughw:CARD=Device,DEV=0"
 
     sample_rate: 16000
     channels: 1
