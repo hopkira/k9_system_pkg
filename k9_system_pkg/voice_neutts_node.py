@@ -872,7 +872,6 @@ class K9NeuTTSVoiceNode(Node):
         command = [
             self._pipewire_executable,
             "--playback",
-            "--raw",
             f"--rate={self._sample_rate}",
             "--channels=1",
             "--channel-map=mono",
@@ -880,6 +879,7 @@ class K9NeuTTSVoiceNode(Node):
             f"--latency={self._pipewire_latency_ms}ms",
             f"--volume={self._pipewire_volume}",
             "--media-role=Communication",
+            "-", #raw PCM from stdin
         ]
 
         if self._pipewire_target:

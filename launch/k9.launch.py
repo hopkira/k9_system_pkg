@@ -20,6 +20,8 @@ JETSON_NODES = [
     'hotword',
     'k9_stt',
     'voice_piper',
+    'intent',
+    'conversation',
 ]
 
 
