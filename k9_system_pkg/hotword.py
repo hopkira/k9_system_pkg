@@ -97,6 +97,8 @@ class HotwordNode(Node):
             WAITING_FOR_HOTWORD,
         )
 
+        self._frames_captured = 0
+        self._frames_published = 0
         self._last_debug_tokens = ""
 
         # ------------------------------------------------------------------
@@ -357,22 +359,24 @@ class HotwordNode(Node):
                     while self.kws.is_ready(self.kws_stream):
                         self.kws.decode_stream(self.kws_stream)
 
-                        tokens = self.keyword_spotter.tokens(self.stream)
+                    # DEBUG: show the current token hypothesis
+                    tokens = self.kws.tokens(self.kws_stream)
 
-                        if tokens:
-                            token_text = " ".join(tokens)
+                    if tokens:
+                        token_text = " ".join(tokens)
 
-                            if token_text != self._last_debug_tokens:
-                                self.get_logger().info(
-                                    f"KWS hearing: {token_text}"
-                                )
-                                self._last_debug_tokens = token_text
+                        if token_text != self._last_debug_tokens:
+                            self.get_logger().info(
+                                f"KWS hearing: {token_text}"
+                            )
+                            self._last_debug_tokens = token_text
 
                     result = self.kws.get_result(self.kws_stream)
 
                     if result:
-                        # One spoken wake word = one ROS event. The stream is
-                        # reset immediately as required by sherpa-onnx.
+                        self._last_debug_tokens = ""
+
+                        # One spoken wake word = one ROS event.
                         self.kws.reset_stream(self.kws_stream)
                         self._armed = False
                         self._queue_hotword(result)
