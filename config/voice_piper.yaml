@@ -1,31 +1,20 @@
 voice_piper:
   ros__parameters:
-    # K9's existing custom Piper voice.
-    # Leaving config_path empty makes Piper look for:
-    #   /home/hopkira/k9_piper_voice/k9_model.onnx.json
     model_path: /home/hopkira/k9_piper_voice/k9_model.onnx
     config_path: ""
     use_cuda: false
 
-    # Warm the persistent ONNX session at node start.
     warmup_enabled: true
     warmup_text: "Affirmative."
 
-    # Sentence-driven dialogue interface.
-    sentence_topic: /voice/sentence
+    # Established K9 priority/cancellation interface
+    action_name: /voice/speak
 
-    # Existing voice status interfaces.
+    # Existing speech status/expression outputs
     is_talking_topic: /voice/is_talking
     rms_topic: /voice/rms_level
     state_topic: /voice/state
 
-    # Ordinary streamed sentences are lower priority than speak_now.
-    topic_priority: 20
-    speak_now_priority: 100
-
-    # PipeWire playback.
     pipewire_executable: pw-play
     pipewire_volume: 1.0
-
-    # RMS publication cadence for expression/eyes.
     rms_frame_ms: 50

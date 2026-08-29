@@ -1,32 +1,36 @@
 #!/usr/bin/env python3
-"""Sentence-driven Piper voice node for K9.
+"""Sentence-driven Piper replacement for K9's established SpeakText action.
 
-Piper is installed in its own virtual environment, while this ROS 2 node runs
-under K9's normal ROS Python environment.  At import time we temporarily add
-Piper's site-packages directory so Piper and its ONNX Runtime dependencies can
-be imported without duplicating them into k9_venv.
+External contract
+-----------------
+Action server:
+    /voice/speak    k9_interfaces_pkg/action/SpeakText
 
-Architecture
-------------
-/voice/sentence -> sentence queue -> Piper synthesis -> audio queue -> pw-play
+The SpeakText goal already owns interruption and queue semantics:
+    text
+    owner
+    priority
+    interrupt_lower_priority
+    clear_lower_priority
 
-Synthesis and playback use separate worker threads.  This allows sentence N+1
-to be synthesised while sentence N is already being spoken.
+Cancellation uses normal ROS 2 action goal cancellation.
 
-Existing K9 semantics retained:
-* /speak_now pre-empts current and queued ordinary speech.
-* /cancel_speech stops playback and discards queued/stale synthesis.
-* /voice/is_talking publishes the actual playback state.
-* /voice/rms_level publishes a normalised RMS level while speech is playing.
+Implementation
+--------------
+* K9's Piper voice is loaded once and kept resident on CPU.
+* Each action goal remains one speech goal from the BT's perspective.
+* The goal text is split internally at sentence boundaries.
+* Sentence N+1 is synthesised while sentence N is playing.
+* Higher-priority goals can interrupt/clear lower-priority speech according to
+  the goal flags.
 """
 
 from __future__ import annotations
 
 from array import array
-from collections import deque
-from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
 import heapq
-import io
 import itertools
 import math
 import os
@@ -34,84 +38,75 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import wave
 
 
-
-# ---------------------------------------------------------------------------
-# Import Piper from its dedicated venv without requiring rclpy in that venv.
-# Override with K9_PIPER_SITE_PACKAGES if the Piper environment moves.
-# ---------------------------------------------------------------------------
+# Piper remains in its own venv.  The ROS node itself runs in K9's ROS Python
+# environment and imports Piper/ONNX Runtime from this site-packages directory.
 _PIPER_SITE_PACKAGES = os.environ.get(
     "K9_PIPER_SITE_PACKAGES",
     "/home/hopkira/tts_env/piper/.venv/lib/python3.12/site-packages",
 )
-
-_piper_path_added = False
 if _PIPER_SITE_PACKAGES not in sys.path:
     sys.path.insert(0, _PIPER_SITE_PACKAGES)
-    _piper_path_added = True
 
-try:
-    from piper import PiperVoice
-finally:
-    # Piper has now imported its own onnxruntime/numpy dependencies.  Remove
-    # the temporary path so subsequent ROS imports resolve normally.
-    if _piper_path_added:
-        try:
-            sys.path.remove(_PIPER_SITE_PACKAGES)
-        except ValueError:
-            pass
+from piper import PiperVoice  # noqa: E402
 
+import rclpy  # noqa: E402
+from rclpy.action import ActionServer, CancelResponse, GoalResponse  # noqa: E402
+from rclpy.callback_groups import ReentrantCallbackGroup  # noqa: E402
+from rclpy.executors import MultiThreadedExecutor  # noqa: E402
+from rclpy.node import Node  # noqa: E402
+from std_msgs.msg import Bool, Float32, String  # noqa: E402
 
-import rclpy
-from rclpy.node import Node
-
-from std_msgs.msg import Bool, Float32, String
-from std_srvs.srv import Trigger
-
-from k9_interfaces_pkg.srv import Speak
+from k9_interfaces_pkg.action import SpeakText  # noqa: E402
 
 
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
 
 
-@dataclass(frozen=True)
-class SpeechItem:
-    """One complete sentence waiting for Piper synthesis."""
+@dataclass
+class GoalContext:
+    """Runtime state for one accepted SpeakText action goal."""
 
+    goal_handle: object
     text: str
     owner: str
     priority: int
-    generation: int
+    interrupt_lower_priority: bool
+    clear_lower_priority: bool
     sequence: int
+
+    cancel_event: threading.Event = field(default_factory=threading.Event)
+    done_event: threading.Event = field(default_factory=threading.Event)
+
+    success: bool = False
+    cancelled: bool = False
+    preempted: bool = False
+    error_message: str = ""
 
 
 @dataclass(frozen=True)
-class AudioItem:
-    """A synthesised sentence waiting for PipeWire playback."""
+class SentenceAudio:
+    """PCM produced by Piper for one sentence."""
 
     text: str
-    owner: str
-    priority: int
-    generation: int
-    sequence: int
-    wav_bytes: bytes
     pcm_bytes: bytes
     sample_rate: int
     channels: int
 
 
 class VoicePiperNode(Node):
-    """Persistent CPU Piper TTS with sentence-ahead synthesis."""
+    """Priority-aware SpeakText action server backed by Piper CPU TTS."""
 
     def __init__(self) -> None:
         super().__init__("voice_piper")
 
         # ------------------------------------------------------------------
-        # Voice parameters
+        # Voice model
         # ------------------------------------------------------------------
         self.declare_parameter(
             "model_path",
@@ -123,17 +118,15 @@ class VoicePiperNode(Node):
         self.declare_parameter("warmup_text", "Affirmative.")
 
         # ------------------------------------------------------------------
-        # ROS interface parameters
+        # Established ROS contract
         # ------------------------------------------------------------------
-        self.declare_parameter("sentence_topic", "/voice/sentence")
+        self.declare_parameter("action_name", "/voice/speak")
         self.declare_parameter("is_talking_topic", "/voice/is_talking")
         self.declare_parameter("rms_topic", "/voice/rms_level")
         self.declare_parameter("state_topic", "/voice/state")
-        self.declare_parameter("topic_priority", 20)
-        self.declare_parameter("speak_now_priority", 100)
 
         # ------------------------------------------------------------------
-        # Playback parameters
+        # Playback
         # ------------------------------------------------------------------
         self.declare_parameter("pipewire_executable", "pw-play")
         self.declare_parameter("pipewire_volume", 1.0)
@@ -143,29 +136,30 @@ class VoicePiperNode(Node):
             str(self.get_parameter("model_path").value)
         ).expanduser()
 
-        config_text = str(self.get_parameter("config_path").value).strip()
+        config_text = str(
+            self.get_parameter("config_path").value
+        ).strip()
         self._config_path = (
-            Path(config_text).expanduser() if config_text else None
+            Path(config_text).expanduser()
+            if config_text
+            else None
         )
 
-        self._use_cuda = bool(self.get_parameter("use_cuda").value)
-
-        self._sentence_topic = str(
-            self.get_parameter("sentence_topic").value
+        self._use_cuda = bool(
+            self.get_parameter("use_cuda").value
+        )
+        self._action_name = str(
+            self.get_parameter("action_name").value
         )
         self._is_talking_topic = str(
             self.get_parameter("is_talking_topic").value
         )
-        self._rms_topic = str(self.get_parameter("rms_topic").value)
-        self._state_topic = str(self.get_parameter("state_topic").value)
-
-        self._topic_priority = int(
-            self.get_parameter("topic_priority").value
+        self._rms_topic = str(
+            self.get_parameter("rms_topic").value
         )
-        self._speak_now_priority = int(
-            self.get_parameter("speak_now_priority").value
+        self._state_topic = str(
+            self.get_parameter("state_topic").value
         )
-
         self._pw_play = str(
             self.get_parameter("pipewire_executable").value
         )
@@ -173,490 +167,759 @@ class VoicePiperNode(Node):
             self.get_parameter("pipewire_volume").value
         )
         self._rms_frame_ms = max(
-            10, int(self.get_parameter("rms_frame_ms").value)
+            10,
+            int(self.get_parameter("rms_frame_ms").value),
         )
 
         if not self._model_path.is_file():
             raise FileNotFoundError(
                 f"Piper model not found: {self._model_path}"
             )
-
-        if self._config_path is not None and not self._config_path.is_file():
+        if (
+            self._config_path is not None
+            and not self._config_path.is_file()
+        ):
             raise FileNotFoundError(
                 f"Piper config not found: {self._config_path}"
             )
 
         # ------------------------------------------------------------------
-        # ROS publishers, subscriber and compatibility services
+        # Status publications used elsewhere in K9.
         # ------------------------------------------------------------------
         self._talking_pub = self.create_publisher(
-            Bool, self._is_talking_topic, 10
-        )
-        self._rms_pub = self.create_publisher(
-            Float32, self._rms_topic, 10
-        )
-        self._state_pub = self.create_publisher(
-            String, self._state_topic, 10
-        )
-
-        self._sentence_sub = self.create_subscription(
-            String,
-            self._sentence_topic,
-            self._sentence_callback,
+            Bool,
+            self._is_talking_topic,
             10,
         )
-
-        self._speak_now_srv = self.create_service(
-            Speak,
-            "speak_now",
-            self._speak_now_callback,
+        self._rms_pub = self.create_publisher(
+            Float32,
+            self._rms_topic,
+            10,
         )
-        self._cancel_srv = self.create_service(
-            Trigger,
-            "cancel_speech",
-            self._cancel_callback,
+        self._state_pub = self.create_publisher(
+            String,
+            self._state_topic,
+            10,
         )
-
-        # ------------------------------------------------------------------
-        # Queues and cancellation generation
-        # ------------------------------------------------------------------
-        # The sentence heap is priority ordered.  Negating priority means
-        # larger numeric priorities are selected first.  sequence preserves
-        # FIFO ordering between sentences at equal priority.
-        self._sentence_heap: list[tuple[int, int, SpeechItem]] = []
-
-        # Synthesised audio is FIFO.  Piper synthesis is serial, so this
-        # preserves sentence order while still allowing synthesis-ahead.
-        self._audio_queue: deque[AudioItem] = deque()
-
-        self._sequence = itertools.count()
-        self._condition = threading.Condition()
-
-        # Incrementing generation invalidates both queued work and an older
-        # sentence that happens to finish synthesis after cancellation.
-        self._generation = 0
-        self._shutdown_requested = False
-
-        # The active pw-play process is retained so cancel_speech/speak_now can
-        # stop it from the ROS callback thread.
-        self._play_process: subprocess.Popen[bytes] | None = None
 
         self._publish_talking(False)
         self._publish_rms(0.0)
         self._publish_state("LOADING")
 
         # ------------------------------------------------------------------
-        # Load K9's Piper voice exactly once.
+        # Load K9's model exactly once.
         # ------------------------------------------------------------------
-        load_start = time.perf_counter()
-        self._voice = PiperVoice.load(
-            self._model_path,
-            config_path=self._config_path,
-            use_cuda=self._use_cuda,
-        )
-        load_seconds = time.perf_counter() - load_start
+        start = time.perf_counter()
 
+        if self._config_path is None:
+            self._voice = PiperVoice.load(
+                str(self._model_path),
+                use_cuda=self._use_cuda,
+            )
+        else:
+            self._voice = PiperVoice.load(
+                str(self._model_path),
+                config_path=str(self._config_path),
+                use_cuda=self._use_cuda,
+            )
+
+        load_seconds = time.perf_counter() - start
+        processor = "CUDA" if self._use_cuda else "CPU"
         self.get_logger().info(
             f"Loaded Piper voice in {load_seconds:.3f}s "
-            f"using {'CUDA' if self._use_cuda else 'CPU'}: "
-            f"{self._model_path}"
-)
+            f"using {processor}: {self._model_path}"
+        )
 
-        # Warm ONNX Runtime before the first conversational response.
-        if bool(self.get_parameter("warmup_enabled").value):
+        if bool(
+            self.get_parameter("warmup_enabled").value
+        ):
             warmup_text = str(
                 self.get_parameter("warmup_text").value
             ).strip()
             if warmup_text:
                 warm_start = time.perf_counter()
                 list(self._voice.synthesize(warmup_text))
-            self.get_logger().info(
-                f"Piper warm-up completed in "
-                f"{time.perf_counter() - warm_start:.3f}s"
-)
+                warm_seconds = (
+                    time.perf_counter() - warm_start
+                )
+                self.get_logger().info(
+                    f"Piper warm-up completed in "
+                    f"{warm_seconds:.3f}s"
+                )
 
         # ------------------------------------------------------------------
-        # Separate synthesis and playback workers.
+        # Goal scheduler
         # ------------------------------------------------------------------
-        self._synth_thread = threading.Thread(
-            target=self._synthesis_loop,
-            name="k9-piper-synthesis",
+        self._sequence = itertools.count()
+
+        # Entries are (-priority, sequence, GoalContext), therefore the
+        # numerically highest priority is selected first and equal-priority
+        # goals remain FIFO.
+        self._goal_heap = []
+        self._contexts = {}
+
+        self._condition = threading.Condition()
+        self._active_context = None
+        self._shutdown_requested = False
+
+        # Playback can be terminated by action cancellation or pre-emption.
+        self._playback_lock = threading.Lock()
+        self._play_process = None
+
+        # Piper synthesis is serialised through one executor because one
+        # persistent PiperVoice/ONNX session is shared by all goals.
+        self._synth_executor = ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix="k9-piper-synth",
+        )
+
+        self._scheduler_thread = threading.Thread(
+            target=self._scheduler_loop,
+            name="k9-piper-scheduler",
             daemon=True,
         )
-        self._play_thread = threading.Thread(
-            target=self._playback_loop,
-            name="k9-piper-playback",
-            daemon=True,
+        self._scheduler_thread.start()
+
+        # Reentrant callbacks + a multithreaded executor are important:
+        # execute_callback waits for its queued speech goal to finish, while
+        # new higher-priority goals and cancellation requests must still be
+        # processed immediately.
+        self._callback_group = ReentrantCallbackGroup()
+
+        self._action_server = ActionServer(
+            self,
+            SpeakText,
+            self._action_name,
+            execute_callback=self._execute_callback,
+            goal_callback=self._goal_callback,
+            cancel_callback=self._cancel_callback,
+            callback_group=self._callback_group,
         )
-        self._synth_thread.start()
-        self._play_thread.start()
 
         self._publish_state("IDLE")
         self.get_logger().info(
-            f"Sentence-driven Piper ready: {self._sentence_topic}"
-)
-
-    # ======================================================================
-    # ROS callbacks
-    # ======================================================================
-
-    def _sentence_callback(self, msg: String) -> None:
-        """Queue ordinary dialogue speech.
-
-        The conversation layer should publish each completed sentence as soon
-        as it is available.  A multi-sentence message is still accepted and
-        split defensively.
-        """
-        text = msg.data.strip()
-        if not text:
-            return
-
-        count = self._queue_text(
-            text,
-            owner="dialogue",
-            priority=self._topic_priority,
-            interrupt=False,
+            f"Piper SpeakText action ready: "
+            f"{self._action_name}"
         )
-        if count:
-            self.get_logger().info(
-                f"Queued {count} dialogue sentence(s): {text}"
+
+    # ======================================================================
+    # Action callbacks
+    # ======================================================================
+
+    def _goal_callback(self, goal_request):
+        """Validate a SpeakText request without changing its semantics."""
+        text = str(
+            getattr(goal_request, "text", "")
+        ).strip()
+
+        if not text:
+            self.get_logger().warning(
+                "Rejecting empty SpeakText goal"
+            )
+            return GoalResponse.REJECT
+
+        return GoalResponse.ACCEPT
+
+    def _execute_callback(self, goal_handle):
+        """Queue an accepted action goal and wait for its speech result."""
+        request = goal_handle.request
+
+        context = GoalContext(
+            goal_handle=goal_handle,
+            text=str(
+                getattr(request, "text", "")
+            ).strip(),
+            owner=str(
+                getattr(request, "owner", "unknown")
+            ).strip() or "unknown",
+            priority=int(
+                getattr(request, "priority", 0)
+            ),
+            interrupt_lower_priority=bool(
+                getattr(
+                    request,
+                    "interrupt_lower_priority",
+                    False,
+                )
+            ),
+            clear_lower_priority=bool(
+                getattr(
+                    request,
+                    "clear_lower_priority",
+                    False,
+                )
+            ),
+            sequence=next(self._sequence),
+        )
+
+        self._enqueue_goal(context)
+
+        # The scheduler/playback workers do the actual work.  This callback
+        # waits so the action result still represents completion of the whole
+        # original SpeakText goal, not merely queue admission.
+        while (
+            not context.done_event.wait(timeout=0.05)
+            and rclpy.ok()
+        ):
+            if goal_handle.is_cancel_requested:
+                self._request_cancel(
+                    context,
+                    "Cancelled by action client",
+                )
+
+        result = self._make_result(
+            success=context.success,
+            error_message=context.error_message,
+        )
+
+        if (
+            context.cancelled
+            or goal_handle.is_cancel_requested
+        ):
+            goal_handle.canceled()
+        elif context.success:
+            goal_handle.succeed()
+        else:
+            goal_handle.abort()
+
+        with self._condition:
+            self._contexts.pop(
+                id(goal_handle),
+                None,
             )
 
-    def _speak_now_callback(self, request, response):
-        """Pre-empt ordinary speech and immediately queue urgent speech."""
-        text = request.text.strip()
+        return result
 
-        if not text:
-            response.success = False
-            if hasattr(response, "message"):
-                response.message = "No text supplied"
-            return response
+    def _cancel_callback(self, goal_handle):
+        """Use normal ROS action cancellation for speech cancellation."""
+        with self._condition:
+            context = self._contexts.get(
+                id(goal_handle)
+            )
 
-        count = self._queue_text(
-            text,
-            owner="speak_now",
-            priority=self._speak_now_priority,
-            interrupt=True,
-        )
+        if context is not None:
+            self._request_cancel(
+                context,
+                "Cancelled by action client",
+            )
 
-        response.success = count > 0
-        if hasattr(response, "message"):
-            response.message = f"Queued {count} sentence(s)"
-        return response
-
-    def _cancel_callback(self, _request, response):
-        """Stop playback and discard all queued/stale speech."""
-        self._cancel_all("cancel_speech")
-        response.success = True
-        if hasattr(response, "message"):
-            response.message = "Speech cancelled"
-        return response
+        return CancelResponse.ACCEPT
 
     # ======================================================================
-    # Queue management
+    # Priority scheduler
     # ======================================================================
 
-    @staticmethod
-    def _split_sentences(text: str) -> list[str]:
-        """Split only at strong sentence boundaries: full stop, ? and !."""
-        normalised = " ".join(text.split())
-        if not normalised:
-            return []
-
-        return [
-            part.strip()
-            for part in _SENTENCE_SPLIT_RE.split(normalised)
-            if part.strip()
-        ]
-
-    def _queue_text(
-        self,
-        text: str,
-        *,
-        owner: str,
-        priority: int,
-        interrupt: bool,
-    ) -> int:
-        sentences = self._split_sentences(text)
-        if not sentences:
-            return 0
+    def _enqueue_goal(self, context: GoalContext) -> None:
+        """Apply clear/pre-empt rules and add the new goal to the heap."""
+        cleared = []
+        active_to_interrupt = None
 
         with self._condition:
-            if interrupt:
-                # speak_now starts a fresh generation.  Already-synthesised
-                # audio and queued sentences from the old response disappear.
-                self._generation += 1
-                self._sentence_heap.clear()
-                self._audio_queue.clear()
-                self._terminate_playback_locked()
+            self._contexts[
+                id(context.goal_handle)
+            ] = context
 
-            generation = self._generation
+            # clear_lower_priority removes queued work below this goal's
+            # priority.  Equal/higher priority work is preserved.
+            if context.clear_lower_priority:
+                kept = []
 
-            for sentence in sentences:
-                sequence = next(self._sequence)
-                item = SpeechItem(
-                    text=sentence,
-                    owner=owner,
-                    priority=priority,
-                    generation=generation,
-                    sequence=sequence,
+                for entry in self._goal_heap:
+                    queued = entry[2]
+
+                    if (
+                        queued.priority
+                        < context.priority
+                        and not queued.done_event.is_set()
+                    ):
+                        queued.preempted = True
+                        queued.error_message = (
+                            "Cleared by higher-priority "
+                            f"speech from {context.owner}"
+                        )
+                        cleared.append(queued)
+                    else:
+                        kept.append(entry)
+
+                self._goal_heap = kept
+                heapq.heapify(self._goal_heap)
+
+            # interrupt_lower_priority applies only to speech that is already
+            # active and strictly lower priority.
+            if (
+                context.interrupt_lower_priority
+                and self._active_context is not None
+                and self._active_context.priority
+                    < context.priority
+                and not self._active_context.done_event.is_set()
+            ):
+                active_to_interrupt = (
+                    self._active_context
                 )
-                heapq.heappush(
-                    self._sentence_heap,
-                    (-priority, sequence, item),
+                active_to_interrupt.preempted = True
+                active_to_interrupt.error_message = (
+                    "Pre-empted by higher-priority "
+                    f"speech from {context.owner}"
                 )
+                active_to_interrupt.cancel_event.set()
+
+            heapq.heappush(
+                self._goal_heap,
+                (
+                    -context.priority,
+                    context.sequence,
+                    context,
+                ),
+            )
 
             self._condition.notify_all()
+
+        for queued in cleared:
+            queued.success = False
+            queued.done_event.set()
+
+        if active_to_interrupt is not None:
+            self._terminate_playback()
 
         self._publish_state("QUEUED")
-        return len(sentences)
 
-    def _cancel_all(self, reason: str) -> None:
+        self.get_logger().info(
+            f"Queued speech owner={context.owner} "
+            f"priority={context.priority}: "
+            f"{context.text}"
+        )
+
+    def _request_cancel(
+        self,
+        context: GoalContext,
+        reason: str,
+    ) -> None:
+        """Cancel an active or queued SpeakText goal."""
+        context.cancelled = True
+        context.success = False
+        context.error_message = reason
+        context.cancel_event.set()
+
         with self._condition:
-            self._generation += 1
-            self._sentence_heap.clear()
-            self._audio_queue.clear()
-            self._terminate_playback_locked()
+            is_active = (
+                self._active_context is context
+            )
             self._condition.notify_all()
 
-        self._publish_talking(False)
-        self._publish_rms(0.0)
-        self._publish_state("IDLE")
-        self.get_logger().info(f"Speech cancelled: {reason}")
+        if is_active:
+            self._terminate_playback()
+        else:
+            # A queued cancelled context does not need to wait for the
+            # scheduler to reach it.
+            context.done_event.set()
 
-    # ======================================================================
-    # Piper synthesis worker
-    # ======================================================================
-
-    def _synthesis_loop(self) -> None:
-        """Convert queued sentences to in-memory WAV audio."""
+    def _scheduler_loop(self) -> None:
+        """Run one speech goal at a time in priority order."""
         while True:
             with self._condition:
                 self._condition.wait_for(
                     lambda: (
                         self._shutdown_requested
-                        or bool(self._sentence_heap)
+                        or bool(self._goal_heap)
                     )
                 )
+
                 if self._shutdown_requested:
                     return
 
-                _, _, item = heapq.heappop(self._sentence_heap)
-
-            # The sentence may have been invalidated while waiting.
-            if item.generation != self._generation:
-                continue
-
-            self._publish_state("SYNTHESISING")
-            synth_start = time.perf_counter()
-
-            try:
-                chunks = list(self._voice.synthesize(item.text))
-                audio = self._chunks_to_audio(item, chunks)
-            except Exception as exc:
-                self.get_logger().error(
-                    f"Piper synthesis failed for {item.text}: {exc}"
+                _, _, context = heapq.heappop(
+                    self._goal_heap
                 )
-                self._publish_state("ERROR")
-                continue
 
-            synth_seconds = time.perf_counter() - synth_start
-
-            # Cancellation cannot abort a blocking ONNX session.run(), but a
-            # generation check prevents the resulting stale audio from playing.
-            with self._condition:
-                if item.generation != self._generation:
+                if context.done_event.is_set():
                     continue
 
-                self._audio_queue.append(audio)
-                self._condition.notify_all()
+                self._active_context = context
 
-            audio_seconds = (
-                len(audio.pcm_bytes)
-                / 2.0
-                / audio.channels
-                / audio.sample_rate
-            )
+            try:
+                self._process_goal(context)
+            except Exception as exc:
+                context.success = False
+                context.error_message = str(exc)
+                self.get_logger().error(
+                    f"Speech goal failed: {exc}"
+                )
+                self._publish_state("ERROR")
+            finally:
+                with self._condition:
+                    if self._active_context is context:
+                        self._active_context = None
 
-            self.get_logger().info(
-                f"Synthesised {audio_seconds:.2f}s in {synth_seconds:.3f}s (RTF {synth_seconds / audio_seconds if audio_seconds > 0.0 else 0.0:.3f}): {item.text}"
-            )
+                if not context.done_event.is_set():
+                    context.done_event.set()
+
+                with self._condition:
+                    idle = (
+                        self._active_context is None
+                        and not self._goal_heap
+                    )
+
+                if idle:
+                    self._publish_state("IDLE")
+
+    # ======================================================================
+    # Sentence pipeline
+    # ======================================================================
 
     @staticmethod
-    def _chunks_to_audio(
-        item: SpeechItem,
-        chunks,
-    ) -> AudioItem:
-        """Combine Piper chunks and wrap the PCM in an in-memory WAV."""
+    def _split_sentences(
+        text: str,
+    ) -> list[str]:
+        """Split internally at strong sentence boundaries only."""
+        normalised = " ".join(text.split())
+
+        if not normalised:
+            return []
+
+        return [
+            sentence.strip()
+            for sentence in _SENTENCE_SPLIT_RE.split(
+                normalised
+            )
+            if sentence.strip()
+        ]
+
+    def _process_goal(
+        self,
+        context: GoalContext,
+    ) -> None:
+        """Speak all sentences belonging to one SpeakText action goal."""
+        sentences = self._split_sentences(
+            context.text
+        )
+
+        if not sentences:
+            context.success = False
+            context.error_message = "No speakable text"
+            return
+
+        self._publish_state("SYNTHESISING")
+
+        # Generate sentence 1 before talking starts.
+        current_future = self._synth_executor.submit(
+            self._synthesise_sentence,
+            sentences[0],
+        )
+
+        talking_started = False
+
+        try:
+            for index, sentence in enumerate(
+                sentences
+            ):
+                if context.cancel_event.is_set():
+                    break
+
+                audio = current_future.result()
+
+                # Cancellation/pre-emption may have happened while ONNX was
+                # finishing the current sentence.
+                if context.cancel_event.is_set():
+                    break
+
+                # Start sentence N+1 synthesis before sentence N playback.
+                next_future = None
+
+                if index + 1 < len(sentences):
+                    next_future = (
+                        self._synth_executor.submit(
+                            self._synthesise_sentence,
+                            sentences[index + 1],
+                        )
+                    )
+
+                if not talking_started:
+                    self._publish_talking(True)
+                    talking_started = True
+
+                self._publish_state("SPEAKING")
+                self._play_sentence(
+                    audio,
+                    context.cancel_event,
+                )
+
+                if context.cancel_event.is_set():
+                    break
+
+                completed = index + 1
+                progress = completed / len(sentences)
+                self._publish_feedback(
+                    context.goal_handle,
+                    progress,
+                )
+
+                current_future = next_future
+
+            if context.cancelled:
+                context.success = False
+
+            elif context.preempted:
+                context.success = False
+
+            elif context.cancel_event.is_set():
+                context.success = False
+                if not context.error_message:
+                    context.error_message = (
+                        "Speech interrupted"
+                    )
+
+            else:
+                context.success = True
+                context.error_message = ""
+                self._publish_feedback(
+                    context.goal_handle,
+                    1.0,
+                )
+
+        finally:
+            if talking_started:
+                self._publish_talking(False)
+
+            self._publish_rms(0.0)
+
+    def _synthesise_sentence(
+        self,
+        sentence: str,
+    ) -> SentenceAudio:
+        """Run one complete sentence through the resident Piper model."""
+        start = time.perf_counter()
+        chunks = list(
+            self._voice.synthesize(sentence)
+        )
+
         if not chunks:
-            raise RuntimeError("Piper returned no audio")
+            raise RuntimeError(
+                "Piper returned no audio"
+            )
 
         first = chunks[0]
         sample_rate = int(first.sample_rate)
         channels = int(first.sample_channels)
-
-        pcm_parts: list[bytes] = []
+        pcm_parts = []
 
         for chunk in chunks:
             if int(chunk.sample_rate) != sample_rate:
-                raise RuntimeError("Piper changed sample rate within sentence")
-            if int(chunk.sample_channels) != channels:
-                raise RuntimeError("Piper changed channel count within sentence")
-            if int(chunk.sample_width) != 2:
                 raise RuntimeError(
-                    f"Expected 16-bit Piper audio, got "
-                    f"{chunk.sample_width}-byte samples"
+                    "Piper changed sample rate "
+                    "within a sentence"
                 )
 
-            pcm_parts.append(chunk.audio_int16_bytes)
+            if int(
+                chunk.sample_channels
+            ) != channels:
+                raise RuntimeError(
+                    "Piper changed channel count "
+                    "within a sentence"
+                )
+
+            if int(chunk.sample_width) != 2:
+                raise RuntimeError(
+                    "Piper did not return "
+                    "16-bit PCM"
+                )
+
+            pcm_parts.append(
+                chunk.audio_int16_bytes
+            )
 
         pcm_bytes = b"".join(pcm_parts)
 
-        wav_buffer = io.BytesIO()
-        with wave.open(wav_buffer, "wb") as wav_file:
-            wav_file.setnchannels(channels)
-            wav_file.setsampwidth(2)
-            wav_file.setframerate(sample_rate)
-            wav_file.writeframes(pcm_bytes)
+        audio_seconds = (
+            len(pcm_bytes)
+            / 2.0
+            / channels
+            / sample_rate
+        )
+        synth_seconds = (
+            time.perf_counter() - start
+        )
+        rtf = (
+            synth_seconds / audio_seconds
+            if audio_seconds > 0.0
+            else 0.0
+        )
 
-        return AudioItem(
-            text=item.text,
-            owner=item.owner,
-            priority=item.priority,
-            generation=item.generation,
-            sequence=item.sequence,
-            wav_bytes=wav_buffer.getvalue(),
+        self.get_logger().info(
+            f"Synthesised {audio_seconds:.2f}s "
+            f"in {synth_seconds:.3f}s "
+            f"(RTF {rtf:.3f}): {sentence}"
+        )
+
+        return SentenceAudio(
+            text=sentence,
             pcm_bytes=pcm_bytes,
             sample_rate=sample_rate,
             channels=channels,
         )
 
     # ======================================================================
-    # PipeWire playback worker
+    # PipeWire playback
     # ======================================================================
 
-    def _playback_loop(self) -> None:
-        """Play synthesised sentences in order while synthesis continues."""
-        while True:
-            with self._condition:
-                self._condition.wait_for(
-                    lambda: (
-                        self._shutdown_requested
-                        or bool(self._audio_queue)
-                    )
-                )
-                if self._shutdown_requested:
-                    return
-
-                audio = self._audio_queue.popleft()
-
-            if audio.generation != self._generation:
-                continue
-
-            self._play_audio(audio)
-
-            # If nothing remains at either stage, speech really is idle.
-            with self._condition:
-                empty = (
-                    not self._audio_queue
-                    and not self._sentence_heap
-                    and self._play_process is None
-                )
-
-            if empty:
-                self._publish_state("IDLE")
-            else:
-                self._publish_state("QUEUED")
-
-    def _play_audio(self, audio: AudioItem) -> None:
-        """Feed one complete in-memory WAV to pw-play."""
-        command = [
-            self._pw_play,
-            f"--volume={self._volume}",
-            "-",
-        ]
+    def _play_sentence(
+        self,
+        audio: SentenceAudio,
+        cancel_event: threading.Event,
+    ) -> None:
+        """Play one in-memory Piper sentence through pw-play."""
+        temp_path = None
 
         try:
+            with tempfile.NamedTemporaryFile(
+                prefix="k9_piper_",
+                suffix=".wav",
+                delete=False,
+            ) as temp_file:
+                temp_path = temp_file.name
+
+            with wave.open(
+                temp_path,
+                "wb",
+            ) as wav_file:
+                wav_file.setnchannels(
+                    audio.channels
+                )
+                wav_file.setsampwidth(2)
+                wav_file.setframerate(
+                    audio.sample_rate
+                )
+                wav_file.writeframes(
+                    audio.pcm_bytes
+                )
+
             process = subprocess.Popen(
-                command,
-                stdin=subprocess.PIPE,
+                [
+                    self._pw_play,
+                    f"--volume={self._volume}",
+                    temp_path,
+                ],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
             )
-        except Exception as exc:
-            self.get_logger().error(
-                f"Unable to start PipeWire playback: {exc}"
+
+            with self._playback_lock:
+                if cancel_event.is_set():
+                    process.terminate()
+                self._play_process = process
+
+            rms_stop = threading.Event()
+            rms_thread = threading.Thread(
+                target=self._rms_loop,
+                args=(
+                    audio,
+                    rms_stop,
+                    cancel_event,
+                ),
+                name="k9-piper-rms",
+                daemon=True,
             )
-            self._publish_state("ERROR")
-            return
+            rms_thread.start()
 
-        with self._condition:
-            # If cancellation raced with process creation, do not start.
-            if audio.generation != self._generation:
-                process.terminate()
-                return
-            self._play_process = process
+            _, stderr = process.communicate()
 
-        self._publish_state("SPEAKING")
-        self._publish_talking(True)
-
-        rms_stop = threading.Event()
-        rms_thread = threading.Thread(
-            target=self._rms_loop,
-            args=(audio, rms_stop),
-            name="k9-piper-rms",
-            daemon=True,
-        )
-        rms_thread.start()
-
-        stderr = b""
-        try:
-            _, stderr = process.communicate(input=audio.wav_bytes)
-        except BrokenPipeError:
-            # Expected when cancel_speech terminates pw-play.
-            pass
-        finally:
             rms_stop.set()
             rms_thread.join(timeout=0.5)
 
-            with self._condition:
+            with self._playback_lock:
                 if self._play_process is process:
                     self._play_process = None
 
             self._publish_rms(0.0)
-            self._publish_talking(False)
 
-        if (
-            process.returncode not in (0, -15, -9)
-            and audio.generation == self._generation
-        ):
-            detail = stderr.decode("utf-8", errors="replace").strip()
-            self.get_logger().error(
-                f"pw-play failed rc={process.returncode}: {detail}"
+            if (
+                process.returncode not in (
+                    0,
+                    -15,
+                    -9,
+                )
+                and not cancel_event.is_set()
+            ):
+                detail = stderr.decode(
+                    "utf-8",
+                    errors="replace",
+                ).strip()
+
+                raise RuntimeError(
+                    f"pw-play failed "
+                    f"rc={process.returncode}: "
+                    f"{detail}"
+                )
+
+        finally:
+            if temp_path is not None:
+                try:
+                    os.unlink(temp_path)
+                except FileNotFoundError:
+                    pass
+
+    def _terminate_playback(self) -> None:
+        """Immediately terminate the current PipeWire player."""
+        with self._playback_lock:
+            process = self._play_process
+
+            if (
+                process is None
+                or process.poll() is not None
+            ):
+                return
+
+            try:
+                process.terminate()
+            except ProcessLookupError:
+                pass
+
+    # ======================================================================
+    # Feedback / status
+    # ======================================================================
+
+    @staticmethod
+    def _make_result(
+        *,
+        success: bool,
+        error_message: str,
+    ):
+        """Populate the established SpeakText result defensively."""
+        result = SpeakText.Result()
+
+        if hasattr(result, "success"):
+            result.success = bool(success)
+
+        if hasattr(result, "error_message"):
+            result.error_message = str(
+                error_message
             )
-            self._publish_state("ERROR")
 
-    def _terminate_playback_locked(self) -> None:
-        """Terminate active pw-play. Caller holds self._condition."""
-        process = self._play_process
-        if process is None or process.poll() is not None:
-            return
+        return result
 
-        try:
-            process.terminate()
-        except ProcessLookupError:
-            return
+    @staticmethod
+    def _publish_feedback(
+        goal_handle,
+        progress: float,
+    ) -> None:
+        """Publish SpeakText progress if the current action defines it."""
+        feedback = SpeakText.Feedback()
 
-    # ======================================================================
-    # RMS / diagnostics
-    # ======================================================================
+        if hasattr(feedback, "progress"):
+            feedback.progress = float(
+                max(0.0, min(1.0, progress))
+            )
+
+        goal_handle.publish_feedback(
+            feedback
+        )
 
     def _rms_loop(
         self,
-        audio: AudioItem,
+        audio: SentenceAudio,
         stop_event: threading.Event,
+        cancel_event: threading.Event,
     ) -> None:
-        """Publish approximate playback RMS from each 50 ms PCM window."""
+        """Publish approximate RMS in playback time."""
         samples = array("h")
         samples.frombytes(audio.pcm_bytes)
 
@@ -672,74 +935,146 @@ class VoicePiperNode(Node):
                 / 1000
             ),
         )
-        frame_seconds = self._rms_frame_ms / 1000.0
 
-        for start in range(0, len(samples), samples_per_frame):
-            if stop_event.is_set():
+        frame_seconds = (
+            self._rms_frame_ms / 1000.0
+        )
+
+        for start in range(
+            0,
+            len(samples),
+            samples_per_frame,
+        ):
+            if (
+                stop_event.is_set()
+                or cancel_event.is_set()
+            ):
                 break
 
-            frame = samples[start : start + samples_per_frame]
+            frame = samples[
+                start:
+                start + samples_per_frame
+            ]
+
             if not frame:
                 break
 
-            square_sum = sum(sample * sample for sample in frame)
-            rms = math.sqrt(square_sum / len(frame)) / 32768.0
+            square_sum = sum(
+                sample * sample
+                for sample in frame
+            )
 
-            # A square-root display curve provides useful movement for the eye
-            # animation while retaining the 0..1 contract.
-            level = min(1.0, math.sqrt(max(0.0, rms)))
+            rms = math.sqrt(
+                square_sum / len(frame)
+            ) / 32768.0
+
+            # A sqrt display curve gives useful expression movement while
+            # preserving a 0..1 public level.
+            level = min(
+                1.0,
+                math.sqrt(
+                    max(0.0, rms)
+                ),
+            )
+
             self._publish_rms(level)
+            stop_event.wait(
+                frame_seconds
+            )
 
-            stop_event.wait(frame_seconds)
-
-    def _publish_talking(self, talking: bool) -> None:
-        self._talking_pub.publish(Bool(data=talking))
-
-    def _publish_rms(self, level: float) -> None:
-        self._rms_pub.publish(
-            Float32(data=float(max(0.0, min(1.0, level))))
+    def _publish_talking(
+        self,
+        talking: bool,
+    ) -> None:
+        self._talking_pub.publish(
+            Bool(data=talking)
         )
 
-    def _publish_state(self, state: str) -> None:
-        self._state_pub.publish(String(data=state))
+    def _publish_rms(
+        self,
+        level: float,
+    ) -> None:
+        self._rms_pub.publish(
+            Float32(
+                data=float(
+                    max(
+                        0.0,
+                        min(1.0, level),
+                    )
+                )
+            )
+        )
+
+    def _publish_state(
+        self,
+        state: str,
+    ) -> None:
+        self._state_pub.publish(
+            String(data=state)
+        )
 
     # ======================================================================
     # Shutdown
     # ======================================================================
 
     def close(self) -> None:
-        """Stop worker threads and playback cleanly."""
+        """Stop active speech, scheduler and synthesis executor."""
         with self._condition:
             if self._shutdown_requested:
                 return
 
             self._shutdown_requested = True
-            self._generation += 1
-            self._sentence_heap.clear()
-            self._audio_queue.clear()
-            self._terminate_playback_locked()
+
+            if self._active_context is not None:
+                self._active_context.cancel_event.set()
+
+            for _, _, context in self._goal_heap:
+                context.cancelled = True
+                context.error_message = (
+                    "Voice node shutting down"
+                )
+                context.cancel_event.set()
+                context.done_event.set()
+
+            self._goal_heap.clear()
             self._condition.notify_all()
 
-        self._synth_thread.join(timeout=2.0)
-        self._play_thread.join(timeout=2.0)
+        self._terminate_playback()
+        self._scheduler_thread.join(
+            timeout=2.0
+        )
+
+        self._synth_executor.shutdown(
+            wait=False,
+            cancel_futures=True,
+        )
 
         self._publish_talking(False)
         self._publish_rms(0.0)
 
+        self._action_server.destroy()
+
 
 def main(args=None) -> None:
     rclpy.init(args=args)
-    node = None
+    node = VoicePiperNode()
+
+    executor = MultiThreadedExecutor(
+        num_threads=4
+    )
+    executor.add_node(node)
 
     try:
-        node = VoicePiperNode()
-        rclpy.spin(node)
+        executor.spin()
+
     except KeyboardInterrupt:
         pass
+
     finally:
-        if node is not None:
-            node.close()
-            node.destroy_node()
+        node.close()
+        executor.remove_node(node)
+        node.destroy_node()
+
         if rclpy.ok():
             rclpy.shutdown()
 
