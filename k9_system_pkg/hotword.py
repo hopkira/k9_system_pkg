@@ -371,6 +371,15 @@ class HotwordNode(Node):
                             )
                             self._last_debug_tokens = token_text
 
+                    else:
+                        # Sherpa clears its hypothesis after sufficient trailing silence.
+                        # Clear our diagnostic latch too, so the same hypothesis from the
+                        # next spoken attempt is logged again.
+                        if self._last_debug_tokens:
+                            self.get_logger().info("KWS hypothesis cleared")
+
+                        self._last_debug_tokens = ""
+
                     result = self.kws.get_result(self.kws_stream)
 
                     if result:

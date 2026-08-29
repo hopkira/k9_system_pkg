@@ -27,7 +27,7 @@ hotword:
     # The per-keyword :score and #threshold values in keywords.txt take
     # precedence for those keywords; these remain sensible global defaults.
     keywords_score: 2.5
-    keywords_threshold: 0.10
+    keywords_threshold: 0.01
 
     audio_topic: "/audio/raw"
     hotword_topic: "/hotword_detected"
