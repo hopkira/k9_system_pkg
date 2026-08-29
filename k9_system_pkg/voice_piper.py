@@ -39,6 +39,7 @@ import time
 import wave
 
 
+
 # ---------------------------------------------------------------------------
 # Import Piper from its dedicated venv without requiring rclpy in that venv.
 # Override with K9_PIPER_SITE_PACKAGES if the Piper environment moves.
@@ -67,9 +68,11 @@ finally:
 
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import Bool, Float32, String
 
-from k9_interfaces_pkg.srv import CancelSpeech, Speak
+from std_msgs.msg import Bool, Float32, String
+from std_srvs.srv import Trigger
+
+from k9_interfaces_pkg.srv import Speak
 
 
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
@@ -209,7 +212,7 @@ class VoicePiperNode(Node):
             self._speak_now_callback,
         )
         self._cancel_srv = self.create_service(
-            CancelSpeech,
+            Trigger,
             "cancel_speech",
             self._cancel_callback,
         )
@@ -251,12 +254,13 @@ class VoicePiperNode(Node):
             config_path=self._config_path,
             use_cuda=self._use_cuda,
         )
+        load_seconds = time.perf_counter() - load_start
+
         self.get_logger().info(
-            "Loaded Piper voice in %.3fs using %s: %s",
-            time.perf_counter() - load_start,
-            "CUDA" if self._use_cuda else "CPU",
-            self._model_path,
-        )
+            f"Loaded Piper voice in {load_seconds:.3f}s "
+            f"using {'CUDA' if self._use_cuda else 'CPU'}: "
+            f"{self._model_path}"
+)
 
         # Warm ONNX Runtime before the first conversational response.
         if bool(self.get_parameter("warmup_enabled").value):
@@ -266,10 +270,10 @@ class VoicePiperNode(Node):
             if warmup_text:
                 warm_start = time.perf_counter()
                 list(self._voice.synthesize(warmup_text))
-                self.get_logger().info(
-                    "Piper warm-up completed in %.3fs",
-                    time.perf_counter() - warm_start,
-                )
+            self.get_logger().info(
+                f"Piper warm-up completed in "
+                f"{time.perf_counter() - warm_start:.3f}s"
+)
 
         # ------------------------------------------------------------------
         # Separate synthesis and playback workers.
@@ -289,9 +293,8 @@ class VoicePiperNode(Node):
 
         self._publish_state("IDLE")
         self.get_logger().info(
-            "Sentence-driven Piper ready: %s",
-            self._sentence_topic,
-        )
+            f"Sentence-driven Piper ready: {self._sentence_topic}"
+)
 
     # ======================================================================
     # ROS callbacks
@@ -316,9 +319,7 @@ class VoicePiperNode(Node):
         )
         if count:
             self.get_logger().info(
-                "Queued %d dialogue sentence(s): %s",
-                count,
-                text,
+                f"Queued {count} dialogue sentence(s): {text}"
             )
 
     def _speak_now_callback(self, request, response):
@@ -421,7 +422,7 @@ class VoicePiperNode(Node):
         self._publish_talking(False)
         self._publish_rms(0.0)
         self._publish_state("IDLE")
-        self.get_logger().info("Speech cancelled: %s", reason)
+        self.get_logger().info(f"Speech cancelled: {reason}")
 
     # ======================================================================
     # Piper synthesis worker
@@ -454,9 +455,7 @@ class VoicePiperNode(Node):
                 audio = self._chunks_to_audio(item, chunks)
             except Exception as exc:
                 self.get_logger().error(
-                    "Piper synthesis failed for %r: %s",
-                    item.text,
-                    exc,
+                    f"Piper synthesis failed for {item.text}: {exc}"
                 )
                 self._publish_state("ERROR")
                 continue
@@ -480,15 +479,7 @@ class VoicePiperNode(Node):
             )
 
             self.get_logger().info(
-                "Synthesised %.2fs in %.3fs (RTF %.3f): %s",
-                audio_seconds,
-                synth_seconds,
-                (
-                    synth_seconds / audio_seconds
-                    if audio_seconds > 0.0
-                    else 0.0
-                ),
-                item.text,
+                f"Synthesised {audio_seconds:.2f}s in {synth_seconds:.3f}s (RTF {synth_seconds / audio_seconds if audio_seconds > 0.0 else 0.0:.3f}): {item.text}"
             )
 
     @staticmethod
@@ -594,8 +585,7 @@ class VoicePiperNode(Node):
             )
         except Exception as exc:
             self.get_logger().error(
-                "Unable to start PipeWire playback: %s",
-                exc,
+                f"Unable to start PipeWire playback: {exc}"
             )
             self._publish_state("ERROR")
             return
@@ -642,9 +632,7 @@ class VoicePiperNode(Node):
         ):
             detail = stderr.decode("utf-8", errors="replace").strip()
             self.get_logger().error(
-                "pw-play failed rc=%s: %s",
-                process.returncode,
-                detail,
+                f"pw-play failed rc={process.returncode}: {detail}"
             )
             self._publish_state("ERROR")
 
