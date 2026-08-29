@@ -99,7 +99,10 @@ class HotwordNode(Node):
 
         self._frames_captured = 0
         self._frames_published = 0
-        self._last_debug_tokens = ""
+
+        # Hotword hypothesis debug logging. This is a latch so that the same
+        # hypothesis is not logged repeatedly while the user is speaking.
+        # self._last_debug_tokens = ""
 
         # ------------------------------------------------------------------
         # DEBUG
@@ -360,6 +363,7 @@ class HotwordNode(Node):
                         self.kws.decode_stream(self.kws_stream)
 
                     # DEBUG: show the current token hypothesis
+                    '''
                     tokens = self.kws.tokens(self.kws_stream)
 
                     if tokens:
@@ -379,6 +383,7 @@ class HotwordNode(Node):
                             self.get_logger().info("KWS hypothesis cleared")
 
                         self._last_debug_tokens = ""
+                    '''
 
                     result = self.kws.get_result(self.kws_stream)
 
