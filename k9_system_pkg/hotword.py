@@ -97,6 +97,8 @@ class HotwordNode(Node):
             WAITING_FOR_HOTWORD,
         )
 
+        self._last_debug_tokens = ""
+
         # ------------------------------------------------------------------
         # DEBUG
         # ------------------------------------------------------------------
@@ -354,6 +356,17 @@ class HotwordNode(Node):
 
                     while self.kws.is_ready(self.kws_stream):
                         self.kws.decode_stream(self.kws_stream)
+
+                        tokens = self.keyword_spotter.tokens(self.stream)
+
+                        if tokens:
+                            token_text = " ".join(tokens)
+
+                            if token_text != self._last_debug_tokens:
+                                self.get_logger().info(
+                                    f"KWS hearing: {token_text}"
+                                )
+                                self._last_debug_tokens = token_text
 
                     result = self.kws.get_result(self.kws_stream)
 
