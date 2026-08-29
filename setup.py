@@ -14,9 +14,6 @@ setup(
         (os.path.join('share', package_name, 'launch'), glob('launch/*.launch.py')),
         (os.path.join("share", package_name, "config"), glob("config/*.yaml")),
     ],
-    scripts=[
-        "scripts/voice_neutts",
-    ],
     install_requires=['setuptools',
                       'ollama',
                       'webrtcvad-wheels',
@@ -42,6 +39,7 @@ setup(
             'context = k9_system_pkg.context:main',
             'ollama = k9_system_pkg.ollama_wrap:main',
             'calendar = k9_system_pkg.k9_calendar:main',
+            'voice_piper = k9_system_pkg.voice_piper:main',
             'hotword = k9_system_pkg.hotword:main',
             'weather = k9_system_pkg.weather:main',
             'garden = k9_system_pkg.gardentasks:main',

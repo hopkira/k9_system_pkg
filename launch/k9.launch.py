@@ -19,7 +19,7 @@ PI_NODES = [
 JETSON_NODES = [
     'hotword',
     'k9_stt',
-    'voice_neutts',
+    'voice_piper',
 ]
 
 
@@ -47,17 +47,6 @@ def launch_nodes(context):
 
     # Installed location of k9_system_pkg
     system_pkg_share = get_package_share_directory('k9_system_pkg')
-
-    voice_neutts_config = os.path.join(
-        system_pkg_share,
-        'config',
-        'voice_neutts.yaml',
-        )
-    voice_id = LaunchConfiguration('voice_id')
-
-    neutts_venv = LaunchConfiguration(
-        'neutts_venv'
-    ).perform(context)
 
     hotword_config = os.path.join(
         system_pkg_share,
@@ -104,24 +93,6 @@ def launch_nodes(context):
             # Restart it automatically if ALSA/Sherpa fails.
             node_args['respawn'] = True
             node_args['respawn_delay'] = 2.0
-
-        if name == 'voice_neutts':
-
-            node_args['name'] = 'k9_tts_node'
-
-            node_args['parameters'] = [
-                voice_neutts_config,
-                {
-                    'voice_id': ParameterValue(
-                        voice_id,
-                        value_type=int,
-                    )
-                },
-            ]
-
-            node_args['additional_env'] = {
-                'K9_NEUTTS_VENV': neutts_venv,
-            }
             
         nodes.append(Node(**node_args))
 
@@ -160,19 +131,6 @@ def generate_launch_description():
             description='Logging level: debug, info, warn, error, fatal',
         ),
 
-        DeclareLaunchArgument(
-            'voice_id',
-            default_value='43',
-            description='NeuTTS voice reference ID (0..999)',
-        ),
-
-        DeclareLaunchArgument(
-            'neutts_venv',
-            default_value=os.path.expanduser(
-                '~/tts_env/neutts/.venv'
-            ),
-            description='Python virtual environment containing NeuTTS',
-        ),
 
         OpaqueFunction(function=launch_nodes),
     ])
