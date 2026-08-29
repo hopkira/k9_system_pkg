@@ -21,13 +21,13 @@ hotword:
 
     provider: "cpu"
     num_threads: 2
-    max_active_paths: 4
+    max_active_paths: 8
     num_trailing_blanks: 1
 
     # The per-keyword :score and #threshold values in keywords.txt take
     # precedence for those keywords; these remain sensible global defaults.
-    keywords_score: 1.0
-    keywords_threshold: 0.25
+    keywords_score: 2.0
+    keywords_threshold: 0.15
 
     audio_topic: "/audio/raw"
     hotword_topic: "/hotword_detected"
