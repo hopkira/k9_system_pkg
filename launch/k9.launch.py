@@ -52,12 +52,12 @@ def launch_nodes(context):
         )
 
     # Installed location of k9_system_pkg
-    system_pkg_share = get_package_share_directory('k9_system_pkg')
-    k9_perception_share = get_package_share_directory('k9_perception_pkg'
-)
+    k9_system_share = get_package_share_directory('k9_system_pkg')
+    k9_perception_share = get_package_share_directory('k9_perception_pkg')
+
 
     hotword_config = os.path.join(
-        system_pkg_share,
+        k9_system_share,
         'config',
         'hotword.yaml',
     )
