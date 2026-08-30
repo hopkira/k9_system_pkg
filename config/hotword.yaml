@@ -20,7 +20,7 @@ hotword:
     tokens_file: "tokens.txt"
 
     provider: "cpu"
-    num_threads: 2
+    num_threads: 1
     max_active_paths: 8
     num_trailing_blanks: 1
 
