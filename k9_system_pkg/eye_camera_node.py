@@ -166,7 +166,7 @@ class EyeCameraNode(Node):
         # Minimum time between published frames.
         self.publish_interval = 1.0 / self.publish_frame_rate
 
-        self.last_publish_time = 0.0
+        self.next_publish_time = time.monotonic()
 
         # Statistics
         self.frames_received = 0
@@ -310,12 +310,14 @@ class EyeCameraNode(Node):
                 # number of frames K9's perception system requires.
                 # ------------------------------------------------------
 
-                if (
-                    now - self.last_publish_time
-                    < self.publish_interval
-                ):
+                if now < self.next_publish_time:
                     self.frames_dropped += 1
                     continue
+
+                # Advance the ideal publication schedule rather than resetting it
+                # to the actual arrival time of this camera frame.
+                while self.next_publish_time <= now:
+                    self.next_publish_time += self.publish_interval
 
                 buffer = sample.get_buffer()
 
@@ -351,7 +353,6 @@ class EyeCameraNode(Node):
                 self.publisher.publish(msg)
 
                 self.frames_published += 1
-                self.last_publish_time = now
 
             except Exception as exc:
                 self.capture_errors += 1
