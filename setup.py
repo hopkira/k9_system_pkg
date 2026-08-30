@@ -48,7 +48,7 @@ setup(
             'logo_test = k9_system_pkg.k9_logo_test:main',
             'intent = k9_system_pkg.intent:main',
             'conversation = k9_system_pkg.conversation_node:main',
-            'eye_camera = k9_system_pkg.eye_camera_node:main",
+            'eye_camera = k9_system_pkg.eye_camera_node:main',
         ],
     },
 )
