@@ -23,6 +23,9 @@ JETSON_NODES = [
     'voice_piper',
     'intent',
     'conversation',
+    'face_detector',
+    'face_tracker',
+    'face_recogniser',
 ]
 
 
@@ -50,11 +53,69 @@ def launch_nodes(context):
 
     # Installed location of k9_system_pkg
     system_pkg_share = get_package_share_directory('k9_system_pkg')
+    k9_perception_share = get_package_share_directory('k9_perception_pkg'
+)
 
     hotword_config = os.path.join(
         system_pkg_share,
         'config',
         'hotword.yaml',
+    )
+
+    eye_camera_node = Node(
+        package="k9_system_pkg",
+        executable="eye_camera",
+        name="eye_camera",
+        output="screen",
+        parameters=[
+            os.path.join(
+                k9_system_share,
+                "config",
+                "eye_camera.yaml",
+            )
+        ],
+    )
+
+    face_detector_node = Node(
+        package="k9_perception_pkg",
+        executable="face_detector",
+        name="face_detector",
+        output="screen",
+        parameters=[
+            os.path.join(
+                k9_perception_share,
+                "config",
+                "face_detector.yaml",
+            )
+        ],
+    )
+
+    face_tracker_node = Node(
+        package="k9_perception_pkg",
+        executable="face_tracker",
+        name="face_tracker",
+        output="screen",
+        parameters=[
+            os.path.join(
+                k9_perception_share,
+                "config",
+                "face_tracker.yaml",
+            )
+        ],
+    )
+
+    face_recogniser_node = Node(
+        package="k9_perception_pkg",
+        executable="face_recogniser",
+        name="face_recogniser",
+        output="screen",
+        parameters=[
+            os.path.join(
+                k9_perception_share,
+                "config",
+                "face_recogniser.yaml",
+            )
+        ],
     )
 
     nodes = []
