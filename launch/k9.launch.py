@@ -13,7 +13,8 @@ K9_VENV_SITE_PACKAGES = os.path.expanduser(
 PI_NODES = [
     'back_lights',
     'ears',
-    'eyestail',
+    'eyes_tail',
+    'eye_camera',
 ]
 
 JETSON_NODES = [

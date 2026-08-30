@@ -33,7 +33,7 @@ setup(
             'internet_monitor = k9_system_pkg.internet_monitor:main',
             'back_lights = k9_system_pkg.back_lights:main',
             'ears = k9_system_pkg.ears:main',
-            'eyestail = k9_system_pkg.eyestail:main',
+            'eyes_tail = k9_system_pkg.eyes_tail_node:main',
             'k9_client = k9_system_pkg.k9_client:main',
             'voice_action = k9_system_pkg.voice_action:main',
             'context = k9_system_pkg.context:main',
@@ -48,6 +48,7 @@ setup(
             'logo_test = k9_system_pkg.k9_logo_test:main',
             'intent = k9_system_pkg.intent:main',
             'conversation = k9_system_pkg.conversation_node:main',
+            'eye_camera = k9_system_pkg.eye_camera_node:main",
         ],
     },
 )

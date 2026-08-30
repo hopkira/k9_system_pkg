@@ -1,0 +1,10 @@
+eye_camera:
+  ros__parameters:
+    device: "/dev/k9_eye_camera"
+
+    camera_width: 1280
+    camera_height: 720
+    frame_rate: 30.0
+
+    frame_id: "k9_eye_camera"
+    image_topic: "/k9/camera/eye/image_raw"
