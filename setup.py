@@ -44,7 +44,6 @@ setup(
             'weather = k9_system_pkg.weather:main',
             'garden = k9_system_pkg.gardentasks:main',
             'k9_stt = k9_system_pkg.k9_stt_ros2:main',
-            'face_detect = k9_system_pkg.face_detection:main',
             'logo_test = k9_system_pkg.k9_logo_test:main',
             'intent = k9_system_pkg.intent:main',
             'conversation = k9_system_pkg.conversation_node:main',
