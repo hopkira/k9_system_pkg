@@ -62,70 +62,22 @@ def launch_nodes(context):
         'hotword.yaml',
     )
 
-    eye_camera_node = Node(
-        package="k9_system_pkg",
-        executable="eye_camera",
-        name="eye_camera",
-        output="screen",
-        parameters=[
-            os.path.join(
-                k9_system_share,
-                "config",
-                "eye_camera.yaml",
-            )
-        ],
-    )
-
-    face_detector_node = Node(
-        package="k9_perception_pkg",
-        executable="face_detector",
-        name="face_detector",
-        output="screen",
-        parameters=[
-            os.path.join(
-                k9_perception_share,
-                "config",
-                "face_detector.yaml",
-            )
-        ],
-    )
-
-    face_tracker_node = Node(
-        package="k9_perception_pkg",
-        executable="face_tracker",
-        name="face_tracker",
-        output="screen",
-        parameters=[
-            os.path.join(
-                k9_perception_share,
-                "config",
-                "face_tracker.yaml",
-            )
-        ],
-    )
-
-    face_recogniser_node = Node(
-        package="k9_perception_pkg",
-        executable="face_recogniser",
-        name="face_recogniser",
-        output="screen",
-        parameters=[
-            os.path.join(
-                k9_perception_share,
-                "config",
-                "face_recogniser.yaml",
-            )
-        ],
-    )
-
     nodes = []
 
     for name in node_names:
 
-        package = (
-            'k9_stt_pkg'
-            if name == 'k9_stt'
-            else 'k9_system_pkg')
+        if name == 'k9_stt':
+            package = 'k9_stt_pkg'
+
+        elif name in (
+            'face_detector',
+            'face_tracker',
+            'face_recogniser',
+        ):
+            package = 'k9_perception_pkg'
+
+        else:
+            package = 'k9_system_pkg'
 
         # Common settings for every K9 system node
         node_args = {
@@ -157,6 +109,28 @@ def launch_nodes(context):
             # Restart it automatically if ALSA/Sherpa fails.
             node_args['respawn'] = True
             node_args['respawn_delay'] = 2.0
+
+        elif name == 'eye_camera':
+            node_args['parameters'] = [
+                os.path.join(
+                    k9_system_share,
+                    'config',
+                    'eye_camera.yaml',
+                )
+            ]
+
+        elif name in (
+            'face_detector',
+            'face_tracker',
+            'face_recogniser',
+        ):
+            node_args['parameters'] = [
+                os.path.join(
+                    k9_perception_share,
+                    'config',
+                    f'{name}.yaml',
+                )
+            ]
             
         nodes.append(Node(**node_args))
 
