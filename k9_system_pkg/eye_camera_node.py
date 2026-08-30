@@ -1,40 +1,89 @@
 #!/usr/bin/env python3
 
-import cv2
-import rclpy
+import threading
+import time
 
-from cv_bridge import CvBridge
+import gi
+
+gi.require_version("Gst", "1.0")
+from gi.repository import Gst
+
+import rclpy
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
-from sensor_msgs.msg import Image
+from rclpy.qos import (
+    QoSProfile,
+    ReliabilityPolicy,
+    HistoryPolicy,
+)
+
+from sensor_msgs.msg import CompressedImage
 
 
 class EyeCameraNode(Node):
     """
-    Capture frames from K9's USB eye camera and publish them as ROS 2 images.
+    Capture K9's Arducam IMX477 UVC MJPEG stream and publish the
+    JPEG frames directly as sensor_msgs/CompressedImage.
 
-    The camera is expected to be exposed as a standard V4L2/UVC device,
-    normally via the persistent udev symlink:
+    No JPEG decode/re-encode is performed on the Raspberry Pi.
 
-        /dev/k9_eye_camera
+    Camera:
+        Arducam IMX477 HQ Camera
+        UVC/V4L2
+        MJPEG
 
-    This node deliberately performs no face detection or other vision
-    processing. Those workloads belong on the Jetson.
+    Typical operating mode:
+        camera capture: 1280x720 @ 100 fps
+        ROS publication: 30 fps
     """
 
     def __init__(self):
         super().__init__("eye_camera")
 
-        # ------------------------------------------------------------------
+        # --------------------------------------------------------------
         # Parameters
-        # ------------------------------------------------------------------
+        # --------------------------------------------------------------
 
-        self.declare_parameter("device", "/dev/k9_eye_camera")
-        self.declare_parameter("camera_width", 1280)
-        self.declare_parameter("camera_height", 720)
-        self.declare_parameter("frame_rate", 30.0)
-        self.declare_parameter("frame_id", "k9_eye_camera")
-        self.declare_parameter("image_topic", "/k9/camera/eye/image_raw")
+        self.declare_parameter(
+            "device",
+            "/dev/k9_eye_camera",
+        )
+
+        self.declare_parameter(
+            "camera_width",
+            1280,
+        )
+
+        self.declare_parameter(
+            "camera_height",
+            720,
+        )
+
+        # This must correspond to a mode actually advertised by V4L2.
+        #
+        # The Arducam currently advertises:
+        #
+        #   1280x720 MJPEG @ 100 fps
+        #
+        self.declare_parameter(
+            "capture_frame_rate",
+            100,
+        )
+
+        # We do not need to send all 100 camera frames across ROS.
+        self.declare_parameter(
+            "publish_frame_rate",
+            30.0,
+        )
+
+        self.declare_parameter(
+            "frame_id",
+            "k9_eye_camera",
+        )
+
+        self.declare_parameter(
+            "image_topic",
+            "/k9/camera/eye/image/compressed",
+        )
 
         self.device = (
             self.get_parameter("device")
@@ -54,8 +103,14 @@ class EyeCameraNode(Node):
             .integer_value
         )
 
-        self.frame_rate = (
-            self.get_parameter("frame_rate")
+        self.capture_frame_rate = (
+            self.get_parameter("capture_frame_rate")
+            .get_parameter_value()
+            .integer_value
+        )
+
+        self.publish_frame_rate = (
+            self.get_parameter("publish_frame_rate")
             .get_parameter_value()
             .double_value
         )
@@ -72,12 +127,17 @@ class EyeCameraNode(Node):
             .string_value
         )
 
-        # ------------------------------------------------------------------
-        # ROS image publisher
+        if self.publish_frame_rate <= 0:
+            raise ValueError(
+                "publish_frame_rate must be greater than zero"
+            )
+
+        # --------------------------------------------------------------
+        # ROS publisher
         #
-        # Camera data is transient sensor data. BEST_EFFORT avoids old frames
-        # accumulating when a subscriber cannot keep up.
-        # ------------------------------------------------------------------
+        # BEST_EFFORT is appropriate for live camera data.
+        # There is no benefit in retransmitting old frames.
+        # --------------------------------------------------------------
 
         qos = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
@@ -86,163 +146,265 @@ class EyeCameraNode(Node):
         )
 
         self.publisher = self.create_publisher(
-            Image,
+            CompressedImage,
             self.image_topic,
             qos,
         )
 
-        self.bridge = CvBridge()
+        # --------------------------------------------------------------
+        # GStreamer
+        # --------------------------------------------------------------
 
-        # ------------------------------------------------------------------
-        # Open the UVC/V4L2 camera
-        # ------------------------------------------------------------------
+        Gst.init(None)
 
-        self.capture = cv2.VideoCapture(
-            self.device,
-            cv2.CAP_V4L2,
+        self.pipeline = None
+        self.appsink = None
+
+        self.running = False
+        self.capture_thread = None
+
+        # Minimum time between published frames.
+        self.publish_interval = 1.0 / self.publish_frame_rate
+
+        self.last_publish_time = 0.0
+
+        # Statistics
+        self.frames_received = 0
+        self.frames_published = 0
+        self.frames_dropped = 0
+        self.capture_errors = 0
+
+        self._create_pipeline()
+
+        # --------------------------------------------------------------
+        # Start capture thread
+        # --------------------------------------------------------------
+
+        self.running = True
+
+        self.capture_thread = threading.Thread(
+            target=self._capture_loop,
+            daemon=True,
+            name="k9-eye-camera",
         )
 
-        if not self.capture.isOpened():
-            self.get_logger().fatal(
-                f"Unable to open eye camera: {self.device}"
-            )
-            raise RuntimeError(
-                f"Unable to open camera {self.device}"
-            )
+        self.capture_thread.start()
 
-        # Request MJPEG from the Arducam bridge.
-        #
-        # This is important because the IMX477 USB bridge supports:
-        #
-        #   1280x720 MJPEG @ up to 100 fps
-        #
-        # although K9 currently only needs 30 fps.
-        fourcc = cv2.VideoWriter_fourcc(*"MJPG")
-
-        self.capture.set(
-            cv2.CAP_PROP_FOURCC,
-            fourcc,
-        )
-        self.capture.set(
-            cv2.CAP_PROP_FRAME_WIDTH,
-            self.width,
-        )
-        self.capture.set(
-            cv2.CAP_PROP_FRAME_HEIGHT,
-            self.height,
-        )
-        self.capture.set(
-            cv2.CAP_PROP_FPS,
-            self.frame_rate,
-        )
-
-        # Keep the capture buffer small so that the ROS stream represents
-        # what K9 sees now rather than frames queued several hundred
-        # milliseconds ago.
-        self.capture.set(
-            cv2.CAP_PROP_BUFFERSIZE,
-            1,
-        )
-
-        # ------------------------------------------------------------------
-        # Report the actual mode negotiated with the camera.
-        #
-        # VideoCapture.set() is a request rather than a guarantee, so this
-        # makes configuration errors immediately visible in the log.
-        # ------------------------------------------------------------------
-
-        actual_width = int(
-            self.capture.get(cv2.CAP_PROP_FRAME_WIDTH)
-        )
-        actual_height = int(
-            self.capture.get(cv2.CAP_PROP_FRAME_HEIGHT)
-        )
-        actual_fps = self.capture.get(cv2.CAP_PROP_FPS)
-
-        actual_fourcc_int = int(
-            self.capture.get(cv2.CAP_PROP_FOURCC)
-        )
-
-        actual_fourcc = "".join(
-            chr((actual_fourcc_int >> (8 * i)) & 0xFF)
-            for i in range(4)
+        # Periodic statistics are useful while tuning the camera.
+        self.stats_timer = self.create_timer(
+            10.0,
+            self._log_statistics,
         )
 
         self.get_logger().info(
-            "Eye camera opened: "
+            "Eye camera started: "
             f"{self.device} "
-            f"{actual_width}x{actual_height} "
-            f"@ {actual_fps:.1f} fps "
-            f"format={actual_fourcc}"
+            f"{self.width}x{self.height} "
+            f"MJPEG capture={self.capture_frame_rate} fps "
+            f"publish={self.publish_frame_rate:.1f} fps "
+            f"topic={self.image_topic}"
         )
 
-        # ------------------------------------------------------------------
-        # Frame timer
-        # ------------------------------------------------------------------
+    def _create_pipeline(self):
+        """
+        Construct a GStreamer pipeline which leaves the camera's
+        JPEG data compressed.
 
-        timer_period = 1.0 / self.frame_rate
+        v4l2src
+            ↓
+        image/jpeg
+            ↓
+        appsink
 
-        self.timer = self.create_timer(
-            timer_period,
-            self.capture_and_publish,
+        max-buffers=1 and drop=true are important: perception systems
+        generally want the newest image, not an old queued frame.
+        """
+
+        pipeline_description = (
+            f"v4l2src device={self.device} "
+            f"! image/jpeg,"
+            f"width={self.width},"
+            f"height={self.height},"
+            f"framerate={self.capture_frame_rate}/1 "
+            f"! appsink "
+            f"name=k9_eye_sink "
+            f"max-buffers=1 "
+            f"drop=true "
+            f"sync=false "
+            f"emit-signals=false"
         )
 
-        self.frames_published = 0
-        self.frames_failed = 0
+        self.get_logger().info(
+            f"GStreamer pipeline: {pipeline_description}"
+        )
 
-    def capture_and_publish(self):
+        try:
+            self.pipeline = Gst.parse_launch(
+                pipeline_description
+            )
+
+        except Exception as exc:
+            raise RuntimeError(
+                f"Unable to create GStreamer pipeline: {exc}"
+            ) from exc
+
+        self.appsink = self.pipeline.get_by_name(
+            "k9_eye_sink"
+        )
+
+        if self.appsink is None:
+            raise RuntimeError(
+                "Unable to find GStreamer appsink"
+            )
+
+        result = self.pipeline.set_state(
+            Gst.State.PLAYING
+        )
+
+        if result == Gst.StateChangeReturn.FAILURE:
+            raise RuntimeError(
+                "GStreamer camera pipeline failed to start"
+            )
+
+    def _capture_loop(self):
         """
-        Capture one frame and publish it.
+        Continuously retrieve the newest JPEG frame from GStreamer.
 
-        OpenCV decodes the MJPEG frame supplied by the UVC camera into BGR.
-        cv_bridge then converts it into a sensor_msgs/Image using bgr8.
+        The camera may run at 100 fps, but ROS publication is throttled
+        independently to publish_frame_rate.
+
+        Because the appsink buffer is restricted to one frame, frames
+        which K9 does not need are discarded rather than accumulating.
         """
 
-        success, frame = self.capture.read()
+        while self.running and rclpy.ok():
 
-        if not success or frame is None:
-            self.frames_failed += 1
-
-            # Avoid flooding the ROS log if the camera temporarily fails.
-            if self.frames_failed == 1 or self.frames_failed % 100 == 0:
-                self.get_logger().warn(
-                    "Failed to capture frame from eye camera "
-                    f"(failures={self.frames_failed})"
+            try:
+                sample = self.appsink.emit(
+                    "try-pull-sample",
+                    Gst.SECOND,
                 )
 
-            return
+                if sample is None:
+                    self.capture_errors += 1
 
-        # Timestamp as close as practical to acquisition.
-        timestamp = self.get_clock().now().to_msg()
+                    if (
+                        self.capture_errors == 1
+                        or self.capture_errors % 10 == 0
+                    ):
+                        self.get_logger().warn(
+                            "Timed out waiting for eye camera frame"
+                        )
 
-        image_msg = self.bridge.cv2_to_imgmsg(
-            frame,
-            encoding="bgr8",
+                    continue
+
+                self.frames_received += 1
+
+                now = time.monotonic()
+
+                # ------------------------------------------------------
+                # Throttle ROS publication.
+                #
+                # We deliberately allow the UVC camera to operate at its
+                # supported native frame rate while only forwarding the
+                # number of frames K9's perception system requires.
+                # ------------------------------------------------------
+
+                if (
+                    now - self.last_publish_time
+                    < self.publish_interval
+                ):
+                    self.frames_dropped += 1
+                    continue
+
+                buffer = sample.get_buffer()
+
+                success, map_info = buffer.map(
+                    Gst.MapFlags.READ
+                )
+
+                if not success:
+                    self.capture_errors += 1
+                    continue
+
+                try:
+                    # map_info.data contains the JPEG produced by the
+                    # Arducam UVC bridge. No decode has occurred.
+                    jpeg_data = bytes(map_info.data)
+
+                finally:
+                    buffer.unmap(map_info)
+
+                msg = CompressedImage()
+
+                msg.header.stamp = (
+                    self.get_clock().now().to_msg()
+                )
+
+                msg.header.frame_id = self.frame_id
+
+                # Standard sensor_msgs convention.
+                msg.format = "jpeg"
+
+                msg.data = jpeg_data
+
+                self.publisher.publish(msg)
+
+                self.frames_published += 1
+                self.last_publish_time = now
+
+            except Exception as exc:
+                self.capture_errors += 1
+
+                self.get_logger().error(
+                    f"Eye camera capture error: {exc!r}"
+                )
+
+                # Prevent a tight error loop.
+                time.sleep(0.1)
+
+    def _log_statistics(self):
+        """
+        Periodically report how the capture/publish pipeline is behaving.
+        """
+
+        self.get_logger().info(
+            "Eye camera statistics: "
+            f"received={self.frames_received}, "
+            f"published={self.frames_published}, "
+            f"dropped={self.frames_dropped}, "
+            f"errors={self.capture_errors}"
         )
-
-        image_msg.header.stamp = timestamp
-        image_msg.header.frame_id = self.frame_id
-
-        self.publisher.publish(image_msg)
-
-        self.frames_published += 1
 
     def destroy_node(self):
         """
-        Release the V4L2 device cleanly before shutting down ROS.
+        Stop capture and release the UVC camera cleanly.
         """
 
-        if hasattr(self, "timer") and self.timer is not None:
-            self.timer.cancel()
+        self.running = False
 
-        if hasattr(self, "capture") and self.capture is not None:
-            if self.capture.isOpened():
-                self.capture.release()
+        if (
+            self.capture_thread is not None
+            and self.capture_thread.is_alive()
+        ):
+            self.capture_thread.join(
+                timeout=2.0
+            )
+
+        if self.pipeline is not None:
+            self.pipeline.set_state(
+                Gst.State.NULL
+            )
+
+        if hasattr(self, "stats_timer"):
+            self.stats_timer.cancel()
 
         self.get_logger().info(
-            "Eye camera stopped. "
-            f"Published {self.frames_published} frames; "
-            f"{self.frames_failed} capture failures."
+            "Eye camera stopped: "
+            f"received={self.frames_received}, "
+            f"published={self.frames_published}, "
+            f"dropped={self.frames_dropped}, "
+            f"errors={self.capture_errors}"
         )
 
         super().destroy_node()
@@ -266,7 +428,9 @@ def main(args=None):
                 f"Eye camera node failed: {exc!r}"
             )
         else:
-            print(f"Eye camera node failed: {exc!r}")
+            print(
+                f"Eye camera node failed: {exc!r}"
+            )
 
     finally:
         if node is not None:

@@ -1,10 +1,17 @@
 eye_camera:
   ros__parameters:
+
     device: "/dev/k9_eye_camera"
 
     camera_width: 1280
     camera_height: 720
-    frame_rate: 30.0
+
+    # Native mode advertised by this Arducam bridge.
+    capture_frame_rate: 100
+
+    # Rate actually sent across ROS/DDS.
+    publish_frame_rate: 30.0
 
     frame_id: "k9_eye_camera"
-    image_topic: "/k9/camera/eye/image_raw"
+
+    image_topic: "/k9/camera/eye/image/compressed"
