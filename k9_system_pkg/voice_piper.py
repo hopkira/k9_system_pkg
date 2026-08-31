@@ -124,6 +124,10 @@ class VoicePiperNode(Node):
         self.declare_parameter("is_talking_topic", "/voice/is_talking")
         self.declare_parameter("rms_topic", "/voice/rms_level")
         self.declare_parameter("state_topic", "/voice/state")
+        self.declare_parameter(
+            "activity_topic",
+            "/interaction/activity",
+        )
 
         # ------------------------------------------------------------------
         # Playback
@@ -174,6 +178,9 @@ class VoicePiperNode(Node):
         self._state_topic = str(
             self.get_parameter("state_topic").value
         )
+        self._activity_topic = str(
+            self.get_parameter("activity_topic").value
+        )
         self._pw_play = str(
             self.get_parameter("pipewire_executable").value
         )
@@ -200,6 +207,12 @@ class VoicePiperNode(Node):
         # ------------------------------------------------------------------
         # Status publications used elsewhere in K9.
         # ------------------------------------------------------------------
+
+        self._activity_pub = self.create_publisher(
+            String,
+            self._activity_topic,
+            10,
+        )
         self._talking_pub = self.create_publisher(
             Bool,
             self._is_talking_topic,
@@ -216,7 +229,13 @@ class VoicePiperNode(Node):
             10,
         )
 
-        self._publish_talking(False)
+        # Track the last published values so repeated sentence boundaries do
+        # not generate unnecessary activity/talking transitions.
+        self._status_lock = threading.Lock()
+        self._current_activity = "IDLE"
+        self._is_talking = False
+
+        self._publish_talking(False, force=True)
         self._publish_rms(0.0)
         self._publish_state("LOADING")
 
@@ -311,9 +330,42 @@ class VoicePiperNode(Node):
         )
 
         self._publish_state("IDLE")
+        self._publish_activity("IDLE", force=True)
         self.get_logger().info(
             f"Piper SpeakText action ready: "
             f"{self._action_name}"
+        )
+
+    # ======================================================================
+    # Activity publication
+    # ======================================================================
+
+    def _publish_activity(
+        self,
+        activity: str,
+        *,
+        force: bool = False,
+    ) -> None:
+        """Publish K9's transient conversational activity.
+
+        PROCESSING is normally published by the STT/VAD side as soon as an
+        utterance closes.  This node takes over at the instant audible speech
+        begins by publishing SPEAKING, then returns to IDLE only when the
+        complete queued speech workload has finished.
+        """
+        activity = str(activity).strip().upper()
+
+        with self._status_lock:
+            if (
+                not force
+                and activity == self._current_activity
+            ):
+                return
+
+            self._current_activity = activity
+
+        self._activity_pub.publish(
+            String(data=activity)
         )
 
     # ======================================================================
@@ -546,6 +598,18 @@ class VoicePiperNode(Node):
                 )
 
                 if context.done_event.is_set():
+                    # A queued goal may have been cancelled/cleared before the
+                    # scheduler reached it.  If that was the last outstanding
+                    # goal, restore the presentation to IDLE rather than
+                    # leaving it stuck in SPEAKING/PROCESSING.
+                    idle = not any(
+                        not entry[2].done_event.is_set()
+                        for entry in self._goal_heap
+                    )
+
+                    if idle:
+                        self._publish_idle_status()
+
                     continue
 
                 self._active_context = context
@@ -574,7 +638,14 @@ class VoicePiperNode(Node):
                     )
 
                 if idle:
-                    self._publish_state("IDLE")
+                    self._publish_idle_status()
+
+    def _publish_idle_status(self) -> None:
+        """Restore voice/activity status once no speech work remains."""
+        self._publish_talking(False)
+        self._publish_rms(0.0)
+        self._publish_state("IDLE")
+        self._publish_activity("IDLE")
 
     # ======================================================================
     # Sentence pipeline
@@ -620,8 +691,6 @@ class VoicePiperNode(Node):
             sentences[0],
         )
 
-        talking_started = False
-
         try:
             for index, sentence in enumerate(
                 sentences
@@ -647,14 +716,10 @@ class VoicePiperNode(Node):
                         )
                     )
 
-                if not talking_started:
-                    self._publish_talking(True)
-                    talking_started = True
-
-                self._publish_state("SPEAKING")
                 self._play_sentence(
                     audio,
                     context.cancel_event,
+                    announce_speaking=(index == 0),
                 )
 
                 if context.cancel_event.is_set():
@@ -691,9 +756,10 @@ class VoicePiperNode(Node):
                 )
 
         finally:
-            if talking_started:
-                self._publish_talking(False)
-
+            # Keep /interaction/activity as SPEAKING until the scheduler knows
+            # that there are no further queued goals.  This prevents a brief
+            # IDLE/green-panel flicker between consecutive SpeakText goals.
+            self._publish_talking(False)
             self._publish_rms(0.0)
 
     def _synthesise_sentence(
@@ -779,8 +845,16 @@ class VoicePiperNode(Node):
         self,
         audio: SentenceAudio,
         cancel_event: threading.Event,
+        *,
+        announce_speaking: bool,
     ) -> None:
-        """Play one in-memory Piper sentence through pw-play."""
+        """Play one in-memory Piper sentence through pw-play.
+
+        For the first sentence in a SpeakText goal, PROCESSING remains visible
+        during the leading PipeWire padding.  SPEAKING and /voice/is_talking
+        are asserted only when the real Piper samples are about to begin.
+        Subsequent sentences keep the existing SPEAKING activity continuously.
+        """
 
         temp_path = None
 
@@ -866,39 +940,52 @@ class VoicePiperNode(Node):
                 self._play_process = process
 
             # --------------------------------------------------------------
-            # Start RMS reporting.
+            # Align visual/talking state with the first real speech sample.
             #
-            # Delay it by the same amount as the leading audio padding so
-            # that RMS-driven animation remains aligned with K9's voice.
+            # pw-play is already running, but the WAV begins with digital
+            # silence.  Keeping PROCESSING active through this short wait means
+            # the panel changes to SPEAKING at the point K9 is actually about
+            # to make sound, rather than when the playback process merely opens.
             # --------------------------------------------------------------
 
-            rms_stop = threading.Event()
+            padding_cancelled = False
 
-            def delayed_rms_loop() -> None:
+            if leading_padding_seconds > 0.0:
+                padding_cancelled = cancel_event.wait(
+                    leading_padding_seconds
+                )
 
-                if leading_padding_seconds > 0:
+            playback_alive = (
+                process.poll() is None
+            )
 
-                    # Use Event.wait rather than time.sleep so cancellation
-                    # can interrupt the delay cleanly.
-                    if cancel_event.wait(
-                        leading_padding_seconds
-                    ):
-                        return
+            if (
+                not padding_cancelled
+                and not cancel_event.is_set()
+                and playback_alive
+            ):
+                if announce_speaking:
+                    self._publish_talking(True)
+                    self._publish_activity("SPEAKING")
+                    self._publish_state("SPEAKING")
 
-                if not rms_stop.is_set():
-                    self._rms_loop(
+                # RMS now starts at sample zero of the unpadded Piper PCM,
+                # therefore it remains aligned with the audible speech.
+                rms_stop = threading.Event()
+                rms_thread = threading.Thread(
+                    target=self._rms_loop,
+                    args=(
                         audio,
                         rms_stop,
                         cancel_event,
-                    )
-
-            rms_thread = threading.Thread(
-                target=delayed_rms_loop,
-                name="k9-piper-rms",
-                daemon=True,
-            )
-
-            rms_thread.start()
+                    ),
+                    name="k9-piper-rms",
+                    daemon=True,
+                )
+                rms_thread.start()
+            else:
+                rms_stop = None
+                rms_thread = None
 
             # --------------------------------------------------------------
             # Wait for pw-play to finish.
@@ -906,10 +993,13 @@ class VoicePiperNode(Node):
 
             _, stderr = process.communicate()
 
-            rms_stop.set()
-            rms_thread.join(
-                timeout=0.5
-            )
+            if rms_stop is not None:
+                rms_stop.set()
+
+            if rms_thread is not None:
+                rms_thread.join(
+                    timeout=0.5
+                )
 
             with self._playback_lock:
                 if self._play_process is process:
@@ -1077,7 +1167,20 @@ class VoicePiperNode(Node):
     def _publish_talking(
         self,
         talking: bool,
+        *,
+        force: bool = False,
     ) -> None:
+        talking = bool(talking)
+
+        with self._status_lock:
+            if (
+                not force
+                and talking == self._is_talking
+            ):
+                return
+
+            self._is_talking = talking
+
         self._talking_pub.publish(
             Bool(data=talking)
         )
@@ -1143,6 +1246,8 @@ class VoicePiperNode(Node):
 
         self._publish_talking(False)
         self._publish_rms(0.0)
+        self._publish_state("IDLE")
+        self._publish_activity("IDLE")
 
         self._action_server.destroy()
 
