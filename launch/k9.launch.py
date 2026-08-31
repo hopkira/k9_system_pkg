@@ -70,6 +70,7 @@ def launch_nodes(context):
 
     for name in node_names:
 
+        # STT owns its own launch/configuration.
         if name == 'k9_stt':
 
             stt_launch = os.path.join(
@@ -84,19 +85,22 @@ def launch_nodes(context):
                 )
             )
 
+            # Do not also launch k9_stt through the generic Node() code below.
             continue
 
-        elif name in (
+        # Perception executables live in k9_perception_pkg.
+        if name in (
             'face_detector',
             'face_tracker',
             'face_recogniser',
         ):
             package = 'k9_perception_pkg'
 
-    else:
-        package = 'k9_system_pkg'
+        # Everything else in this list lives in k9_system_pkg.
+        else:
+            package = 'k9_system_pkg'
 
-        # Common settings for every K9 system node
+        # Common settings for every normally-launched K9 node.
         node_args = {
             'package': package,
             'executable': name,
@@ -105,10 +109,6 @@ def launch_nodes(context):
             'emulate_tty': True,
             'arguments': [
                 '--ros-args',
-                '--log-level',
-                log_level,
-            ],
-        }
 
         # Node-specific configuration
         if name == 'hotword':
