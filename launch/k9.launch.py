@@ -4,6 +4,10 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from ament_index_python.packages import get_package_share_directory
 from launch_ros.parameter_descriptions import ParameterValue
+
+from launch.actions import IncludeLaunchDescription
+from launch.launch_description_sources import PythonLaunchDescriptionSource
+
 import os
 
 K9_VENV_SITE_PACKAGES = os.path.expanduser(
@@ -67,7 +71,20 @@ def launch_nodes(context):
     for name in node_names:
 
         if name == 'k9_stt':
-            package = 'k9_stt_pkg'
+
+            stt_launch = os.path.join(
+                get_package_share_directory('k9_stt_pkg'),
+                'launch',
+                'stt.launch.py',
+            )
+
+            nodes.append(
+                IncludeLaunchDescription(
+                    PythonLaunchDescriptionSource(stt_launch)
+                )
+            )
+
+            continue
 
         elif name in (
             'face_detector',
@@ -76,8 +93,8 @@ def launch_nodes(context):
         ):
             package = 'k9_perception_pkg'
 
-        else:
-            package = 'k9_system_pkg'
+    else:
+        package = 'k9_system_pkg'
 
         # Common settings for every K9 system node
         node_args = {
