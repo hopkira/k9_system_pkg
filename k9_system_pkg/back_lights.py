@@ -42,7 +42,7 @@ class BackLightsNode(Node):
 
     2. Automatic interaction presentation
        -----------------------------------
-       /audio/effective_mode determines K9's persistent interaction mode:
+       /audio/effective_state determines K9's persistent interaction mode:
 
            NOT_LISTENING        -> blue panel pattern
            WAITING_FOR_HOTWORD  -> red panel pattern
@@ -308,7 +308,7 @@ class BackLightsNode(Node):
 
         self.create_subscription(
             String,
-            "/audio/effective_mode",
+            "/audio/effective_state",
             self.audio_mode_cb,
             10,
         )
@@ -349,7 +349,7 @@ class BackLightsNode(Node):
         )
 
         # Start with a deterministic presentation. Once the authoritative
-        # /audio/effective_mode arrives, the display will be updated.
+        # /audio/effective_state arrives, the display will be updated.
         self.render()
 
         self.get_logger().info(

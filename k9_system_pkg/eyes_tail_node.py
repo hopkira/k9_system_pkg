@@ -19,9 +19,9 @@ ros2 run k9_system_pkg eyestail
 ros2 param dump /eyes_tail_service_node
 
 Test various levels of brightness:
-ros2 topic pub --once /audio/effective_mode std_msgs/msg/String "{data: 'NOT_LISTENING'}"
-ros2 topic pub --once /audio/effective_mode std_msgs/msg/String "{data: 'WAITING_FOR_HOTWORD'}"
-ros2 topic pub --once /audio/effective_mode std_msgs/msg/String "{data: 'LISTENING'}"
+ros2 topic pub --once /audio/effective_state std_msgs/msg/String "{data: 'NOT_LISTENING'}"
+ros2 topic pub --once /audio/effective_state std_msgs/msg/String "{data: 'WAITING_FOR_HOTWORD'}"
+ros2 topic pub --once /audio/effective_state std_msgs/msg/String "{data: 'LISTENING'}"
 ros2 service call /eyes_get_level k9_interfaces_pkg/srv/GetBrightness "{}"
 ros2 service call /eyes_set_level k9_interfaces_pkg/srv/SetBrightness "{level: 0.25}"
 ros2 service call /eyes_on std_srvs/srv/Trigger "{}"
@@ -177,8 +177,8 @@ class EyesTailServiceNode(Node):
             "/voice/is_talking",
         )
         self.declare_parameter(
-            "effective_mode_topic",
-            "/audio/effective_mode",
+            "effective_state_topic",
+            "/audio/effective_state",
         )
         self.declare_parameter(
             "emergency_topic",
@@ -194,8 +194,8 @@ class EyesTailServiceNode(Node):
         self._is_talking_topic = str(
             self.get_parameter("is_talking_topic").value
         )
-        self._effective_mode_topic = str(
-            self.get_parameter("effective_mode_topic").value
+        self._effective_state_topic = str(
+            self.get_parameter("effective_state_topic").value
         )
         self._emergency_topic = str(
             self.get_parameter("emergency_topic").value
@@ -243,7 +243,7 @@ class EyesTailServiceNode(Node):
         )
         self.create_subscription(
             String,
-            self._effective_mode_topic,
+            self._effective_state_topic,
             self.audio_mode_cb,
             10,
         )
@@ -288,7 +288,7 @@ class EyesTailServiceNode(Node):
             f"activity={self._activity_topic}, "
             f"rms={self._rms_topic}, "
             f"is_talking={self._is_talking_topic}, "
-            f"mode={self._effective_mode_topic}"
+            f"mode={self._effective_state_topic}"
         )
 
     # ------------------------------------------------------------------
