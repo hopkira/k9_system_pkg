@@ -28,11 +28,11 @@ ros2 service call /eyes_on std_srvs/srv/Trigger "{}"
 ros2 service call /eyes_off std_srvs/srv/Trigger "{}"
 
 Test RMS interface:
-ros2 topic pub -r 10 /is_talking std_msgs/msg/Bool "{data: true}"
+ros2 topic pub -r 10 /voice/is_talking std_msgs/msg/Bool "{data: true}"
 ros2 topic pub -r 30 /voice/rms_level std_msgs/msg/Float32 "{data: 0.02}"
 ros2 topic pub -r 30 /voice/rms_level std_msgs/msg/Float32 "{data: 0.08}"
 ros2 topic pub -r 30 /voice/rms_level std_msgs/msg/Float32 "{data: 0.50}"
-ros2 topic pub --once /is_talking std_msgs/msg/Bool "{data: false}"
+ros2 topic pub --once /voice/is_talking std_msgs/msg/Bool "{data: false}"
 
 Test tail wagging:
 ros2 service call /tail_wag_h std_srvs/srv/Trigger "{}"
@@ -43,7 +43,7 @@ ros2 service call /tail_down std_srvs/srv/Trigger "{}"
 
 Check emergency override:
 ros2 topic pub --once /safety/emergency_active std_msgs/msg/Bool "{data: true}"
-ros2 topic pub --once /is_talking std_msgs/msg/Bool "{data: false}"
+ros2 topic pub --once /voice/is_talking std_msgs/msg/Bool "{data: false}"
 ros2 topic pub --once /safety/emergency_active std_msgs/msg/Bool "{data: false}"
 '''
 
@@ -162,6 +162,45 @@ class EyesTailServiceNode(Node):
         # Old eye services remain available as short diagnostic overrides.
         self.declare_parameter("manual_override_sec", 2.0)
 
+        # Topic parameters. These defaults match the current K9 audio/TTS
+        # architecture while allowing launch/YAML overrides if needed.
+        self.declare_parameter(
+            "activity_topic",
+            "/interaction/activity",
+        )
+        self.declare_parameter(
+            "rms_topic",
+            "/voice/rms_level",
+        )
+        self.declare_parameter(
+            "is_talking_topic",
+            "/voice/is_talking",
+        )
+        self.declare_parameter(
+            "effective_mode_topic",
+            "/audio/effective_mode",
+        )
+        self.declare_parameter(
+            "emergency_topic",
+            "/safety/emergency_active",
+        )
+
+        self._activity_topic = str(
+            self.get_parameter("activity_topic").value
+        )
+        self._rms_topic = str(
+            self.get_parameter("rms_topic").value
+        )
+        self._is_talking_topic = str(
+            self.get_parameter("is_talking_topic").value
+        )
+        self._effective_mode_topic = str(
+            self.get_parameter("effective_mode_topic").value
+        )
+        self._emergency_topic = str(
+            self.get_parameter("emergency_topic").value
+        )
+
         self.eyestail = EyesTail(self)
 
         # Authoritative state used by the eye policy.
@@ -186,31 +225,31 @@ class EyesTailServiceNode(Node):
         # Input state subscriptions.
         self.create_subscription(
             String,
-            "/interaction/activity",
+            self._activity_topic,
             self.activity_cb,
             10,
         )
         self.create_subscription(
             Float32,
-            "/voice/rms_level",
+            self._rms_topic,
             self.rms_cb,
             10,
         )
         self.create_subscription(
             Bool,
-            "is_talking",
+            self._is_talking_topic,
             self.talking_cb,
             10,
         )
         self.create_subscription(
             String,
-            "/audio/effective_mode",
+            self._effective_mode_topic,
             self.audio_mode_cb,
             10,
         )
         self.create_subscription(
             Bool,
-            "/safety/emergency_active",
+            self._emergency_topic,
             self.emergency_cb,
             10,
         )
@@ -245,7 +284,11 @@ class EyesTailServiceNode(Node):
         )
 
         self.get_logger().info(
-            "Eyes and tail node ready: automatic eye control at 40 Hz"
+            "Eyes and tail node ready: automatic eye control at 40 Hz; "
+            f"activity={self._activity_topic}, "
+            f"rms={self._rms_topic}, "
+            f"is_talking={self._is_talking_topic}, "
+            f"mode={self._effective_mode_topic}"
         )
 
     # ------------------------------------------------------------------
@@ -359,8 +402,10 @@ class EyesTailServiceNode(Node):
 
         # Speaking overrides everything except emergency.
         #
-        # _is_talking is retained as a backwards-compatible
-        # fallback while /interaction/activity is introduced.
+        # /interaction/activity is now the authoritative presentation
+        # signal. _is_talking is retained only as a backwards-compatible
+        # fallback for any older speech producer that does not publish
+        # SPEAKING activity.
         if (
             self._activity == self.ACTIVITY_SPEAKING
             or self._is_talking
