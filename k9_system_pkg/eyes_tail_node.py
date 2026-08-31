@@ -132,6 +132,9 @@ class EyesTailServiceNode(Node):
     MODE_NOT_LISTENING = "NOT_LISTENING"
     MODE_WAITING_FOR_HOTWORD = "WAITING_FOR_HOTWORD"
     MODE_LISTENING = "LISTENING"
+    ACTIVITY_IDLE = "IDLE"
+    ACTIVITY_PROCESSING = "PROCESSING"
+    ACTIVITY_SPEAKING = "SPEAKING"
 
     CONTROL_PERIOD_SEC = 0.025  # 40 Hz
 
@@ -140,8 +143,9 @@ class EyesTailServiceNode(Node):
 
         # Eye-policy parameters.
         self.declare_parameter("not_listening_level", 0.0)
-        self.declare_parameter("waiting_for_hotword_level", 0.03)
-        self.declare_parameter("listening_level", 0.80)
+        self.declare_parameter("waiting_for_hotword_level", 0.001)
+        self.declare_parameter("listening_level", 0.01)
+        self.declare_parameter("processing_level", 0.50)
 
         # RMS mapping parameters. Assumes /voice/rms_level is normalised 0..1.
         self.declare_parameter("talking_min_level", 0.08)
@@ -162,6 +166,7 @@ class EyesTailServiceNode(Node):
 
         # Authoritative state used by the eye policy.
         self._audio_mode = self.MODE_NOT_LISTENING
+        self._activity = self.ACTIVITY_IDLE
         self._is_talking = False
         self._emergency_active = False
         self._latest_rms = 0.0
@@ -179,6 +184,12 @@ class EyesTailServiceNode(Node):
         self._tail_step_active = False
 
         # Input state subscriptions.
+        self.create_subscription(
+            String,
+            "/interaction/activity",
+            self.activity_cb,
+            10,
+        )
         self.create_subscription(
             Float32,
             "/voice/rms_level",
@@ -240,6 +251,38 @@ class EyesTailServiceNode(Node):
     # ------------------------------------------------------------------
     # State subscriptions
     # ------------------------------------------------------------------
+
+    def activity_cb(
+        self,
+        msg: String,
+    ) -> None:
+        activity = msg.data.strip().upper()
+
+        aliases = {
+            "IDLE": self.ACTIVITY_IDLE,
+            "PROCESSING": self.ACTIVITY_PROCESSING,
+            "THINKING": self.ACTIVITY_PROCESSING,
+            "SPEAKING": self.ACTIVITY_SPEAKING,
+            "TALKING": self.ACTIVITY_SPEAKING,
+        }
+
+        resolved = aliases.get(activity)
+
+        if resolved is None:
+            self.get_logger().warning(
+                f"Ignoring unknown activity: "
+                f"{msg.data!r}"
+            )
+            return
+
+        if resolved != self._activity:
+            self._activity = resolved
+            self.clear_manual_override()
+
+            self.get_logger().info(
+                f"Interaction activity changed "
+                f"to {resolved}"
+            )
 
     def rms_cb(self, msg: Float32) -> None:
         self._latest_rms = max(0.0, float(msg.data))
@@ -314,15 +357,35 @@ class EyesTailServiceNode(Node):
         if self._emergency_active:
             return 0.0
 
-        # Second priority: outgoing speech animation.
-        if self._is_talking:
+        # Speaking overrides everything except emergency.
+        #
+        # _is_talking is retained as a backwards-compatible
+        # fallback while /interaction/activity is introduced.
+        if (
+            self._activity == self.ACTIVITY_SPEAKING
+            or self._is_talking
+        ):
             rms = self._latest_rms
-            if now - self._latest_rms_time > self.rms_stale_timeout_sec:
-                rms = 0.0
-            return self.map_rms_to_eye_level(rms)
 
-        # Optional diagnostic override. Normal BT operation should publish
-        # /audio/effective_mode instead of repeatedly calling eye services.
+            if (
+                now - self._latest_rms_time
+                > self.rms_stale_timeout_sec
+            ):
+                rms = 0.0
+
+            return self.map_rms_to_eye_level(
+                rms
+            )
+
+        # From the instant VAD declares end-of-utterance until
+        # actual playback begins, show a steady bright eye.
+        if (
+            self._activity
+            == self.ACTIVITY_PROCESSING
+        ):
+            return self.processing_level
+
+        # Diagnostic override.
         if (
             self._manual_eye_level is not None
             and now < self._manual_override_until
@@ -332,10 +395,16 @@ class EyesTailServiceNode(Node):
         if self._manual_eye_level is not None:
             self.clear_manual_override()
 
-        if self._audio_mode == self.MODE_LISTENING:
+        if (
+            self._audio_mode
+            == self.MODE_LISTENING
+        ):
             return self.listening_level
 
-        if self._audio_mode == self.MODE_WAITING_FOR_HOTWORD:
+        if (
+            self._audio_mode
+            == self.MODE_WAITING_FOR_HOTWORD
+        ):
             return self.waiting_for_hotword_level
 
         return self.not_listening_level
@@ -555,6 +624,14 @@ class EyesTailServiceNode(Node):
     # ------------------------------------------------------------------
     # Parameter helpers
     # ------------------------------------------------------------------
+
+    @property
+    def processing_level(self) -> float:
+        return float(
+            self.get_parameter(
+                "processing_level"
+            ).value
+        )
 
     @property
     def not_listening_level(self) -> float:
