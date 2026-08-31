@@ -132,6 +132,20 @@ class VoicePiperNode(Node):
         self.declare_parameter("pipewire_volume", 1.0)
         self.declare_parameter("rms_frame_ms", 50)
 
+        self.declare_parameter(
+            "leading_padding_ms",
+            150,
+        )
+
+        self._leading_padding_ms = max(
+            0,
+            int(
+                self.get_parameter(
+                    "leading_padding_ms"
+                ).value
+            ),
+        )
+
         self._model_path = Path(
             str(self.get_parameter("model_path").value)
         ).expanduser()
@@ -767,9 +781,40 @@ class VoicePiperNode(Node):
         cancel_event: threading.Event,
     ) -> None:
         """Play one in-memory Piper sentence through pw-play."""
+
         temp_path = None
 
         try:
+            # --------------------------------------------------------------
+            # Generate a short period of digital silence before the speech.
+            #
+            # This gives PipeWire / ALSA time to open and stabilise the
+            # playback stream before the first actual Piper samples arrive.
+            # It prevents the first phoneme of an utterance being clipped.
+            # --------------------------------------------------------------
+
+            leading_padding_seconds = (
+                self._leading_padding_ms / 1000.0
+            )
+
+            leading_padding_frames = int(
+                audio.sample_rate
+                * leading_padding_seconds
+            )
+
+            # Piper PCM is signed 16-bit audio, so each sample is two bytes.
+            # One silent frame contains one zero-valued sample per channel.
+            leading_silence = (
+                b"\x00"
+                * leading_padding_frames
+                * audio.channels
+                * 2
+            )
+
+            # --------------------------------------------------------------
+            # Write the padded utterance to a temporary WAV file.
+            # --------------------------------------------------------------
+
             with tempfile.NamedTemporaryFile(
                 prefix="k9_piper_",
                 suffix=".wav",
@@ -788,9 +833,21 @@ class VoicePiperNode(Node):
                 wav_file.setframerate(
                     audio.sample_rate
                 )
+
+                # Write silence first so that pw-play can establish
+                # the audio stream before K9 actually starts speaking.
+                wav_file.writeframes(
+                    leading_silence
+                )
+
+                # Follow immediately with the actual Piper audio.
                 wav_file.writeframes(
                     audio.pcm_bytes
                 )
+
+            # --------------------------------------------------------------
+            # Start PipeWire playback.
+            # --------------------------------------------------------------
 
             process = subprocess.Popen(
                 [
@@ -805,25 +862,54 @@ class VoicePiperNode(Node):
             with self._playback_lock:
                 if cancel_event.is_set():
                     process.terminate()
+
                 self._play_process = process
 
+            # --------------------------------------------------------------
+            # Start RMS reporting.
+            #
+            # Delay it by the same amount as the leading audio padding so
+            # that RMS-driven animation remains aligned with K9's voice.
+            # --------------------------------------------------------------
+
             rms_stop = threading.Event()
+
+            def delayed_rms_loop() -> None:
+
+                if leading_padding_seconds > 0:
+
+                    # Use Event.wait rather than time.sleep so cancellation
+                    # can interrupt the delay cleanly.
+                    if cancel_event.wait(
+                        leading_padding_seconds
+                    ):
+                        return
+
+                if not rms_stop.is_set():
+                    self._rms_loop(
+                        audio,
+                        rms_stop,
+                        cancel_event,
+                    )
+
             rms_thread = threading.Thread(
-                target=self._rms_loop,
-                args=(
-                    audio,
-                    rms_stop,
-                    cancel_event,
-                ),
+                target=delayed_rms_loop,
                 name="k9-piper-rms",
                 daemon=True,
             )
+
             rms_thread.start()
+
+            # --------------------------------------------------------------
+            # Wait for pw-play to finish.
+            # --------------------------------------------------------------
 
             _, stderr = process.communicate()
 
             rms_stop.set()
-            rms_thread.join(timeout=0.5)
+            rms_thread.join(
+                timeout=0.5
+            )
 
             with self._playback_lock:
                 if self._play_process is process:
@@ -844,17 +930,23 @@ class VoicePiperNode(Node):
                     errors="replace",
                 ).strip()
 
-                raise RuntimeError(
+                self.get_logger().warning(
                     f"pw-play failed "
-                    f"rc={process.returncode}: "
+                    f"(returncode={process.returncode}): "
                     f"{detail}"
                 )
 
         finally:
+            # --------------------------------------------------------------
+            # Always remove the temporary WAV file.
+            # --------------------------------------------------------------
+
             if temp_path is not None:
                 try:
-                    os.unlink(temp_path)
-                except FileNotFoundError:
+                    os.unlink(
+                        temp_path
+                    )
+                except OSError:
                     pass
 
     def _terminate_playback(self) -> None:

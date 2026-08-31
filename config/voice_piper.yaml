@@ -18,3 +18,5 @@ voice_piper:
     pipewire_executable: pw-play
     pipewire_volume: 1.0
     rms_frame_ms: 50
+
+    leading_padding_ms: 150
