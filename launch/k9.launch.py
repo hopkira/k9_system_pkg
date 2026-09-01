@@ -11,6 +11,9 @@ from launch.actions import (
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 
+from launch.substitutions import PathJoinSubstitution
+from launch_ros.substitutions import FindPackageShare
+
 from launch_ros.actions import Node
 
 
@@ -73,10 +76,6 @@ def launch_nodes(context):
 
     k9_system_share = get_package_share_directory(
         'k9_system_pkg'
-    )
-
-    k9_perception_share = get_package_share_directory(
-        'k9_perception_pkg'
     )
 
     hotword_config = os.path.join(
@@ -197,10 +196,12 @@ def launch_nodes(context):
         ):
 
             node_args['parameters'] = [
-                os.path.join(
-                    k9_perception_share,
-                    'config',
-                    f'{name}.yaml',
+                PathJoinSubstitution(
+                    [
+                        FindPackageShare('k9_perception_pkg'),
+                        'config',
+                        f'{name}.yaml',
+                    ]
                 )
             ]
 
