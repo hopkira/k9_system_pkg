@@ -204,6 +204,8 @@ class BackLightsNode(Node):
         # Open Pico serial interface
         # --------------------------------------------------------------
 
+        self._comms_lost = False
+
         try:
             self.ser = serial.Serial(
                 port=serial_port,
@@ -361,6 +363,44 @@ class BackLightsNode(Node):
     # Serial helpers
     # ==================================================================
 
+    def _comms_failed(
+        self,
+        message: str,
+    ) -> None:
+        """
+        Report a communications failure once.
+
+        Further failures are suppressed until communications have
+        successfully recovered.
+        """
+
+        if not self._comms_lost:
+            self.get_logger().error(message)
+            self._comms_lost = True
+
+            # Switch state is now stale. The first valid reading after
+            # communications recover will establish a new baseline.
+            self._last_switch_state = None
+
+
+    def _comms_succeeded(
+        self,
+    ) -> None:
+        """
+        Record successful communications.
+
+        This arms the error logger so that a future communications
+        failure will be reported once.
+        """
+
+        if self._comms_lost:
+            self.get_logger().info(
+                "Back-light communications restored."
+            )
+
+        self._comms_lost = False
+
+
     def __write_unlocked(
         self,
         text: str,
@@ -375,9 +415,9 @@ class BackLightsNode(Node):
             not self.ser
             or not self.ser.is_open
         ):
-            self.get_logger().error(
-                "Serial port not available. "
-                "Command not sent."
+            self._comms_failed(
+                "Back-light communications lost: "
+                "serial port not available."
             )
             return False
 
@@ -385,11 +425,15 @@ class BackLightsNode(Node):
             self.ser.write(
                 (text + "\n").encode()
             )
+
+            self._comms_succeeded()
+
             return True
 
         except serial.SerialException as error:
-            self.get_logger().error(
-                f"Serial write failed: {error}"
+            self._comms_failed(
+                "Back-light communications lost: "
+                f"serial write failed: {error}"
             )
             return False
 
@@ -483,9 +527,9 @@ class BackLightsNode(Node):
                 line_bytes = self.ser.readline()
 
             except serial.SerialException as error:
-                self.get_logger().error(
-                    "Serial read failed: "
-                    f"{error}"
+                self._comms_failed(
+                    "Back-light communications lost: "
+                    f"serial read failed: {error}"
                 )
                 return None
 
@@ -544,10 +588,14 @@ class BackLightsNode(Node):
             )
             return None
 
-        return [
+        switch_states = [
             bool(value)
             for value in switchstate_list
         ]
+
+        self._comms_succeeded()
+
+        return switch_states
 
     # ==================================================================
     # Automatic interaction presentation
