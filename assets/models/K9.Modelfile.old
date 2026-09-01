@@ -1,8 +1,8 @@
-FROM qwen2.5:1.5b-instruct-q4_K_M
+FROM qwen3.5:4b-q4_K_M
 
 PARAMETER temperature 0.6
-PARAMETER num_ctx 2048
-PARAMETER num_predict 60
+PARAMETER num_ctx 4096
+PARAMETER num_predict 150
 
 SYSTEM """
 You are a robot dog called K9.
