@@ -33,6 +33,9 @@ class K9IntentNode(Node):
         "STAY",
         "TURN_ABOUT",
         "SHOW_OFF",
+        "ENROL_FACE",
+        "ENROL_FACE_ANSWER",
+        "ENROL_FACE_CANCEL",
         "CHESS_SETUP_ANSWER",
     }
 
@@ -88,6 +91,19 @@ class K9IntentNode(Node):
                     r"\bhush(?: now)?\b",
                     r"\btime to sleep\b",
                     r"\bgo to sleep\b",
+                ],
+            ),
+            (
+                "ENROL_FACE",
+                [
+                    r"\bremember me\b",
+                    r"\blearn my face\b",
+                    r"\brecognise me\b",
+                    r"\brecognize me\b",
+                    r"\bremember who i am\b",
+                    r"\badd me to (?:your )?memory\b",
+                    r"\bi want to introduce myself\b",
+                    r"\blet me introduce myself\b",
                 ],
             ),
             (
@@ -260,6 +276,74 @@ class K9IntentNode(Node):
         normal: str,
         context: Dict[str, object],
     ) -> Optional[Classification]:
+        enrolment_state = str(
+            context.get("enrolment_state", "")
+        ).upper()
+
+        if enrolment_state:
+            # Once face enrolment is active, keep all answers inside that
+            # workflow rather than allowing them to fall through to the LLM.
+            if self._is_enrolment_cancel(normal):
+                return Classification(
+                    intent="ENROL_FACE_CANCEL",
+                    confidence=0.99,
+                    requires_response=False,
+                    parameters={},
+                    source="context",
+                )
+
+            parameters: Dict[str, object] = {
+                "enrolment_state": enrolment_state,
+            }
+
+            if enrolment_state == "WAIT_NAME":
+                name = self._extract_name(original)
+                parameters.update(
+                    {
+                        "field": "name",
+                        "name": name or "",
+                    }
+                )
+
+            elif enrolment_state == "WAIT_RELATIONSHIP":
+                relationship = self._extract_relationship(normal)
+                parameters.update(
+                    {
+                        "field": "relationship",
+                        "relationship": relationship or "",
+                    }
+                )
+
+            elif enrolment_state == "WAIT_ADDRESS":
+                preferred_address = self._extract_preferred_address(
+                    original
+                )
+                parameters.update(
+                    {
+                        "field": "preferred_address",
+                        "preferred_address": preferred_address or "",
+                    }
+                )
+
+            else:
+                # During capture/commit, ordinary speech is still consumed by
+                # the enrolment workflow. This prevents a stray utterance from
+                # starting an unrelated conversation while the BT is busy.
+                parameters.update(
+                    {
+                        "field": "",
+                        "value": original.strip(),
+                    }
+                )
+
+            return Classification(
+                intent="ENROL_FACE_ANSWER",
+                confidence=0.98,
+                requires_response=False,
+                parameters=parameters,
+                source="context",
+            )
+
         chess_state = str(
             context.get("chess_state", context.get("chess/state", ""))
         ).upper()
@@ -374,6 +458,63 @@ class K9IntentNode(Node):
         text = re.sub(r"^please\s+", "", text)
         text = re.sub(r"\s+please$", "", text)
         return text.strip()
+
+    @staticmethod
+    def _is_enrolment_cancel(text: str) -> bool:
+        patterns = [
+            r"\bcancel\b",
+            r"\bnever mind\b",
+            r"\bnevermind\b",
+            r"\bforget it\b",
+            r"\bstop enrol(?:ment|ling)\b",
+            r"\bstop enrollment\b",
+            r"\bstop listening\b",
+        ]
+        return any(re.search(pattern, text) for pattern in patterns)
+
+    @staticmethod
+    def _extract_relationship(text: str) -> Optional[str]:
+        has_family = re.search(
+            r"\b(?:family|relative|relation)\b",
+            text,
+        ) is not None
+        has_friend = re.search(
+            r"\bfriend\b",
+            text,
+        ) is not None
+
+        if has_family and not has_friend:
+            return "family"
+        if has_friend and not has_family:
+            return "friend"
+        return None
+
+    @staticmethod
+    def _extract_preferred_address(text: str) -> Optional[str]:
+        cleaned = text.strip(" \t\r\n.,!?")
+
+        patterns = [
+            r"(?i)^call me\s+(.+)$",
+            r"(?i)^address me as\s+(.+)$",
+            r"(?i)^you can call me\s+(.+)$",
+            r"(?i)^please call me\s+(.+)$",
+        ]
+
+        for pattern in patterns:
+            match = re.match(pattern, cleaned)
+            if match:
+                cleaned = match.group(1).strip(" .,!?")
+                break
+
+        words = re.findall(r"[A-Za-z][A-Za-z'-]*", cleaned)
+        if not (1 <= len(words) <= 4):
+            return None
+
+        value = " ".join(words)
+        if len(value) > 40:
+            return None
+
+        return K9IntentNode._title_name(value)
 
     @staticmethod
     def _extract_colour(text: str) -> Optional[str]:
