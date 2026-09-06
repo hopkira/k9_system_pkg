@@ -345,10 +345,10 @@ class BackLightsNode(Node):
             ),
         )
 
-        self.switch_timer = self.create_timer(
-            1.0 / poll_hz,
-            self.poll_switches,
-        )
+        #self.switch_timer = self.create_timer(
+        #    1.0 / poll_hz,
+        #    self.poll_switches,
+        #)
 
         # Start with a deterministic presentation. Once the authoritative
         # /audio/effective_state arrives, the display will be updated.
