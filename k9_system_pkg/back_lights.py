@@ -350,6 +350,16 @@ class BackLightsNode(Node):
         #    self.poll_switches,
         #)
 
+        self._switch_poll_interval = 1.0 / poll_hz
+        self._switch_stop_event = threading.Event()
+
+        self._switch_thread = threading.Thread(
+            target=self._switch_poll_loop,
+            name="back_panel_switch_poll",
+            daemon=True,
+        )
+        self._switch_thread.start()
+
         # Start with a deterministic presentation. Once the authoritative
         # /audio/effective_state arrives, the display will be updated.
         self.render()
@@ -746,9 +756,35 @@ class BackLightsNode(Node):
             lights
         )
 
+
     # ==================================================================
     # Automatic physical switch polling
     # ==================================================================
+
+    def _switch_poll_loop(self) -> None:
+        """
+        Poll the Pico switches outside the ROS executor.
+
+        Serial reads may block for up to the configured timeout, so they must
+        never run inside a ROS timer callback.
+        """
+
+        while (
+            rclpy.ok()
+            and not self._switch_stop_event.is_set()
+        ):
+            try:
+                self.poll_switches()
+
+            except Exception as error:
+                self.get_logger().error(
+                    f"Back-panel switch polling failed: {error}"
+                )
+
+            self._switch_stop_event.wait(
+                self._switch_poll_interval
+            )
+
 
     def poll_switches(self) -> None:
         """
@@ -1092,6 +1128,20 @@ class BackLightsNode(Node):
     # ==================================================================
 
     def destroy_node(self):
+        if hasattr(
+            self,
+            "_switch_stop_event",
+        ):
+            self._switch_stop_event.set()
+
+        if hasattr(
+            self,
+            "_switch_thread",
+        ):
+            self._switch_thread.join(
+                timeout=1.0
+            )
+
         if (
             self.ser
             and self.ser.is_open
