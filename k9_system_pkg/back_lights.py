@@ -167,11 +167,11 @@ class BackLightsNode(Node):
         )
         self.declare_parameter(
             "serial_timeout_sec",
-            0.05,
+            0.25,
         )
         self.declare_parameter(
             "switch_poll_hz",
-            20.0,
+            5.0,
         )
 
         serial_port = str(
@@ -777,10 +777,11 @@ class BackLightsNode(Node):
         for index in range(
             switch_count
         ):
-            # Rising edge only.
+            # Pico switches use pull-ups:
+            # True = released, False = pressed.
             pressed = (
-                states[index]
-                and not previous[index]
+                not states[index]
+                and previous[index]
             )
 
             if pressed:
