@@ -813,14 +813,12 @@ class BackLightsNode(Node):
         for index in range(
             switch_count
         ):
-            # Pico switches use pull-ups:
-            # True = released, False = pressed.
-            pressed = (
-                not states[index]
-                and previous[index]
+            changed = (
+                states[index]
+                ^ previous[index]
             )
 
-            if pressed:
+            if changed:
                 self.handle_switch_press(
                     index
                 )
