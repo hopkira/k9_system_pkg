@@ -6,6 +6,7 @@ import threading
 import urllib.error
 import urllib.request
 import time
+import re
 
 import rclpy
 from rclpy.node import Node
@@ -251,6 +252,38 @@ class K9ConversationNode(Node):
     # Conversation worker
     # ----------------------------------------------------------------------
 
+    def trim_incomplete_final_sentence(self, text: str) -> str:
+        """
+        Remove an incomplete final sentence from a truncated LLM response.
+
+        Only trims when at least one complete sentence already exists, so a short
+        response without terminal punctuation is not discarded entirely.
+        """
+        text = text.strip()
+
+        if not text:
+            return text
+
+        # Treat punctuation followed by optional closing quotes/brackets as a
+        # completed sentence.
+        matches = list(
+            re.finditer(
+                r'[.!?](?:["\'”’)\]]*)',
+                text,
+            )
+        )
+
+        if not matches:
+            return text
+
+        last_complete_end = matches[-1].end()
+
+        # Nothing needs trimming if the response already ends cleanly.
+        if not text[last_complete_end:].strip():
+            return text
+
+        return text[:last_complete_end].rstrip()
+
     def conversation_worker(self):
         """
         Serial worker for LLM requests.
@@ -325,6 +358,17 @@ class K9ConversationNode(Node):
         }
 
         response_text = self.call_ollama(payload)
+
+        trimmed_response = self.trim_incomplete_final_sentence(
+            response_text
+        )
+
+        if trimmed_response != response_text:
+            self.get_logger().warning(
+                'Removed incomplete final sentence from Ollama response'
+            )
+
+        response_text = trimmed_response
 
         if not response_text:
             self.get_logger().warning(
