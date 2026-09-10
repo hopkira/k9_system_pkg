@@ -677,15 +677,36 @@ class EyesTailServiceNode(Node):
 
     def up_cb(self, request, response):
         del request
+
         self.start_tail_sequence([
-            TailStep(5121, 5601, 0.25),
-            TailStep(4321, 5601, 0.25),
+            # Centre first.
+            TailStep(
+                5121,
+                5601,
+                0.20,
+            ),
+
+            # Intermediate position makes the rise visibly smoother.
+            TailStep(
+                4721,
+                5601,
+                0.22,
+            ),
+
+            # Proud/happy raised position.
+            TailStep(
+                4321,
+                5601,
+                0.45,
+            ),
         ])
+
         response.success = not self._emergency_active
         response.message = (
             "Tail raise started"
             if response.success
-            else "Tail command rejected: emergency active"
+            else
+            "Tail command rejected: emergency active"
         )
         return response
 
