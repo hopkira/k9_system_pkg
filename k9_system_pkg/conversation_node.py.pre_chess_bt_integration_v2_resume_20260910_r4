@@ -5,7 +5,6 @@ import queue
 import threading
 import urllib.error
 import urllib.request
-import time
 
 import rclpy
 from rclpy.node import Node
@@ -102,18 +101,6 @@ class K9ConversationNode(Node):
             10
         )
 
-
-        self.chess_reaction_response_pub = self.create_publisher(
-            String,
-            '/conversation/chess_reaction/response',
-            10,
-        )
-        self.chess_reaction_sub = self.create_subscription(
-            String,
-            '/conversation/chess_reaction/request',
-            self.chess_reaction_callback,
-            10,
-        )
         self.reset_srv = self.create_service(
             Trigger,
             '/conversation/reset',
@@ -179,57 +166,11 @@ class K9ConversationNode(Node):
         )
 
         try:
-            self.request_queue.put_nowait(
-            {
-                "kind": "conversation",
-                "text": text,
-                "request_id": "",
-            }
-        )
+            self.request_queue.put_nowait(text)
 
         except queue.Full:
             self.get_logger().warning(
                 'Conversation request queue full; dropping utterance'
-            )
-
-    def chess_reaction_callback(self, msg: String):
-        """Queue one autonomous chess event reaction.
-
-        This path is separate from normal conversation history.
-        """
-        try:
-            payload = json.loads(msg.data)
-        except json.JSONDecodeError:
-            self.get_logger().warning(
-                'Malformed chess reaction request'
-            )
-            return
-
-        request_id = str(
-            payload.get('request_id', '')
-        ).strip()
-        prompt = str(
-            payload.get('prompt', '')
-        ).strip()
-
-        if not request_id or not prompt:
-            self.get_logger().warning(
-                'Incomplete chess reaction request'
-            )
-            return
-
-        try:
-            self.request_queue.put_nowait(
-                {
-                    'kind': 'chess_reaction',
-                    'text': prompt,
-                    'request_id': request_id,
-                }
-            )
-        except queue.Full:
-            self.get_logger().warning(
-                'Conversation request queue full; '
-                'chess reaction will use BT fallback'
             )
 
     def reset_callback(self, request, response):
@@ -262,33 +203,14 @@ class K9ConversationNode(Node):
         while not self.stop_event.is_set():
 
             try:
-                item = self.request_queue.get(timeout=0.5)
+                text = self.request_queue.get(timeout=0.5)
+
             except queue.Empty:
                 continue
 
             try:
-                # Backwards compatibility for a string already queued during
-                # a live source reload.
-                if isinstance(item, str):
-                    self.process_utterance(item)
-                else:
-                    kind = str(
-                        item.get('kind', 'conversation')
-                    )
-                    text = str(
-                        item.get('text', '')
-                    )
-                    request_id = str(
-                        item.get('request_id', '')
-                    )
+                self.process_utterance(text)
 
-                    if kind == 'chess_reaction':
-                        self.process_chess_reaction(
-                            text,
-                            request_id,
-                        )
-                    else:
-                        self.process_utterance(text)
             except Exception as exc:
                 self.get_logger().error(
                     f'Unexpected conversation error: {exc}'
@@ -303,14 +225,9 @@ class K9ConversationNode(Node):
         with self.history_lock:
             messages = list(self.history)
 
-            chess_system_messages = (
-                self.chess_context.system_messages()
-            )
-            if chess_system_messages:
-                messages = (
-                    chess_system_messages
-                    + messages
-                )
+            chess_system_message = self.chess_context.system_message()
+            if chess_system_message is not None:
+                messages.insert(0, chess_system_message)
         messages.append({
             'role': 'user',
             'content': text
@@ -361,49 +278,8 @@ class K9ConversationNode(Node):
     # Ollama
     # ----------------------------------------------------------------------
 
-    def process_chess_reaction(
-        self,
-        prompt: str,
-        request_id: str,
-    ):
-        """Generate one K9-style chess reaction without history."""
-        payload = {
-            'model': self.model,
-            'messages': [
-                {
-                    'role': 'user',
-                    'content': prompt,
-                }
-            ],
-            'stream': False,
-            'think': False,
-            'keep_alive': self.keep_alive,
-        }
-
-        response_text = self.call_ollama(payload)
-
-        response = String()
-        response.data = json.dumps(
-            {
-                'request_id': request_id,
-                'text': response_text,
-            },
-            separators=(',', ':'),
-        )
-        self.chess_reaction_response_pub.publish(response)
-
-        if response_text:
-            self.get_logger().info(
-                f'Chess reaction: "{response_text}"'
-            )
-        else:
-            self.get_logger().warning(
-                'Ollama returned an empty chess reaction; '
-                'BT will use its deterministic fallback'
-            )
-
     def call_ollama(self, payload: dict) -> str:
-        """Call the local Ollama chat API and log detailed timing."""
+        """Call the local Ollama chat API."""
 
         data = json.dumps(payload).encode('utf-8')
 
@@ -415,8 +291,6 @@ class K9ConversationNode(Node):
             },
             method='POST'
         )
-
-        request_started = time.perf_counter()
 
         try:
             with urllib.request.urlopen(
@@ -433,41 +307,27 @@ class K9ConversationNode(Node):
             except Exception:
                 body = ''
 
-            elapsed = time.perf_counter() - request_started
-
             self.get_logger().error(
-                f'Ollama HTTP error {exc.code} '
-                f'after {elapsed:.3f}s: {body}'
+                f'Ollama HTTP error {exc.code}: {body}'
             )
 
             return ''
 
         except urllib.error.URLError as exc:
 
-            elapsed = time.perf_counter() - request_started
-
             self.get_logger().error(
-                f'Cannot contact Ollama after '
-                f'{elapsed:.3f}s: {exc.reason}'
+                f'Cannot contact Ollama: {exc.reason}'
             )
 
             return ''
 
         except TimeoutError:
 
-            elapsed = time.perf_counter() - request_started
-
             self.get_logger().error(
-                f'Ollama request timed out after '
-                f'{elapsed:.3f}s'
+                'Ollama request timed out'
             )
 
             return ''
-
-        wall_seconds = (
-            time.perf_counter()
-            - request_started
-        )
 
         try:
             result = json.loads(body)
@@ -480,77 +340,9 @@ class K9ConversationNode(Node):
 
             return ''
 
-        # Ollama reports durations in nanoseconds.
-        def ns_to_seconds(value) -> float:
-            try:
-                return float(value or 0) / 1_000_000_000.0
-            except (TypeError, ValueError):
-                return 0.0
+        message = result.get('message', {})
 
-        total_seconds = ns_to_seconds(
-            result.get('total_duration')
-        )
-
-        load_seconds = ns_to_seconds(
-            result.get('load_duration')
-        )
-
-        prompt_seconds = ns_to_seconds(
-            result.get('prompt_eval_duration')
-        )
-
-        generation_seconds = ns_to_seconds(
-            result.get('eval_duration')
-        )
-
-        prompt_tokens = int(
-            result.get('prompt_eval_count') or 0
-        )
-
-        generated_tokens = int(
-            result.get('eval_count') or 0
-        )
-
-        prompt_rate = (
-            prompt_tokens / prompt_seconds
-            if prompt_seconds > 0.0
-            else 0.0
-        )
-
-        generation_rate = (
-            generated_tokens / generation_seconds
-            if generation_seconds > 0.0
-            else 0.0
-        )
-
-        external_overhead = max(
-            0.0,
-            wall_seconds - total_seconds
-        )
-
-        self.get_logger().info(
-            'Ollama timing: '
-            f'wall={wall_seconds:.3f}s, '
-            f'total={total_seconds:.3f}s, '
-            f'load={load_seconds:.3f}s, '
-            f'prompt={prompt_seconds:.3f}s '
-            f'({prompt_tokens} tok, '
-            f'{prompt_rate:.1f} tok/s), '
-            f'generate={generation_seconds:.3f}s '
-            f'({generated_tokens} tok, '
-            f'{generation_rate:.1f} tok/s), '
-            f'overhead={external_overhead:.3f}s'
-        )
-
-        message = result.get(
-            'message',
-            {}
-        )
-
-        return message.get(
-            'content',
-            ''
-        ).strip()
+        return message.get('content', '').strip()
 
     # ----------------------------------------------------------------------
     # History
