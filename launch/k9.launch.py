@@ -5,8 +5,10 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
+    GroupAction,
     IncludeLaunchDescription,
     OpaqueFunction,
+    SetEnvironmentVariable,
 )
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
@@ -16,9 +18,15 @@ from launch_ros.substitutions import FindPackageShare
 
 from launch_ros.actions import Node
 
+K9_VENV = os.path.expanduser(
+    '~/k9_venv'
+)
 
-K9_VENV_SITE_PACKAGES = os.path.expanduser(
-    '~/k9_venv/lib/python3.12/site-packages'
+K9_VENV_SITE_PACKAGES = os.path.join(
+    K9_VENV,
+    'lib',
+    'python3.12',
+    'site-packages',
 )
 
 
@@ -222,18 +230,67 @@ def launch_nodes(context):
     # Chess is a Jetson-side overlay. Keep engine/manager configuration in the
     # chess package's own launch description.
     if run_bt and enable_chess:
+
         chess_share = get_package_share_directory(
             'k9_chess_pkg'
         )
+
+        existing_pythonpath = os.environ.get(
+            'PYTHONPATH',
+            ''
+        )
+
+        existing_path = os.environ.get(
+            'PATH',
+            ''
+        )
+
+        chess_pythonpath = (
+            K9_VENV_SITE_PACKAGES
+            + (
+                os.pathsep + existing_pythonpath
+                if existing_pythonpath
+                else ''
+            )
+        )
+
+        chess_path = (
+            os.path.join(
+                K9_VENV,
+                'bin',
+            )
+            + os.pathsep
+            + existing_path
+        )
+
         nodes.append(
-            IncludeLaunchDescription(
-                PythonLaunchDescriptionSource(
-                    os.path.join(
-                        chess_share,
-                        'launch',
-                        'chess.launch.py',
-                    )
-                )
+            GroupAction(
+                actions=[
+                    SetEnvironmentVariable(
+                        name='VIRTUAL_ENV',
+                        value=K9_VENV,
+                    ),
+
+                    SetEnvironmentVariable(
+                        name='PATH',
+                        value=chess_path,
+                    ),
+
+                    SetEnvironmentVariable(
+                        name='PYTHONPATH',
+                        value=chess_pythonpath,
+                    ),
+
+                    IncludeLaunchDescription(
+                        PythonLaunchDescriptionSource(
+                            os.path.join(
+                                chess_share,
+                                'launch',
+                                'chess.launch.py',
+                            )
+                        )
+                    ),
+                ]
             )
         )
 
