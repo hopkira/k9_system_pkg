@@ -73,24 +73,61 @@ class EyesTail:
             import board
             import busio
             from adafruit_pca9685 import PCA9685
-
-            self.i2c = busio.I2C(board.SCL, board.SDA)
-            self.pca = PCA9685(self.i2c, address=0x40)
-
-            # PCA9685 frequency is global to the whole chip. The tail servos
-            # require approximately 50-60 Hz, so the eye LED on channel 0
-            # must currently use the same carrier frequency.
-            self.pca.frequency = 60
-
-            self.available = True
-            self.node.get_logger().info(
-                "Eyes and tail hardware initialised successfully"
-            )
         except Exception as error:
             self.node.get_logger().error(
-                f"Failed to initialise PCA9685: {error}"
+                f"Failed to import PCA9685 libraries: {error}"
             )
             return
+
+        max_attempts = 10
+        retry_delay_sec = 0.5
+
+        for attempt in range(1, max_attempts + 1):
+            try:
+                self.i2c = busio.I2C(
+                    board.SCL,
+                    board.SDA,
+                )
+
+                self.pca = PCA9685(
+                    self.i2c,
+                    address=0x40,
+                )
+
+                # PCA9685 frequency is global to the whole chip. The tail servos
+                # require approximately 50-60 Hz, so the eye LED on channel 0
+                # must currently use the same carrier frequency.
+                self.pca.frequency = 60
+
+                self.available = True
+
+                if attempt == 1:
+                    self.node.get_logger().info(
+                        "Eyes and tail hardware initialised successfully"
+                    )
+                else:
+                    self.node.get_logger().info(
+                        "Eyes and tail hardware initialised successfully "
+                        f"on attempt {attempt}/{max_attempts}"
+                    )
+
+                break
+
+            except Exception as error:
+                if attempt >= max_attempts:
+                    self.node.get_logger().error(
+                        "Failed to initialise PCA9685 after "
+                        f"{max_attempts} attempts: {error}"
+                    )
+                    return
+
+                self.node.get_logger().warning(
+                    "PCA9685 initialisation attempt "
+                    f"{attempt}/{max_attempts} failed: {error}; "
+                    f"retrying in {retry_delay_sec:.1f}s"
+                )
+
+                time.sleep(retry_delay_sec)
 
         self.set_eye_level(0.0)
         self.disable_tail_outputs()

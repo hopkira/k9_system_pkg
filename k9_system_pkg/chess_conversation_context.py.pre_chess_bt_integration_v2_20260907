@@ -1,0 +1,426 @@
+#!/usr/bin/env python3
+"""Inject authoritative chess state into ordinary K9 conversation requests."""
+
+from __future__ import annotations
+
+import threading
+import time
+from typing import Optional
+
+from rclpy.node import Node
+from rclpy.qos import (
+    DurabilityPolicy,
+    HistoryPolicy,
+    QoSProfile,
+    ReliabilityPolicy,
+)
+
+from k9_interfaces_pkg.msg import ChessEvent, ChessStatus
+
+
+class ChessConversationContext:
+    """Cache chess state/events and expose a temporary LLM system message.
+
+    The context is injected into each Ollama request while chess is relevant,
+    but is never appended to conversation history.  The deterministic chess
+    subsystem therefore remains authoritative while the LLM is free to express
+    those facts in K9's normal conversational personality.
+    """
+
+    FINISHED_CONTEXT_TTL_SEC = 600.0
+
+    def __init__(
+        self,
+        node: Node,
+    ) -> None:
+        self.node = node
+        self._lock = threading.Lock()
+
+        self._status = None
+        self._received_monotonic = 0.0
+
+        self._last_k9_move = None
+        self._last_human_move = None
+        self._last_position_evaluation = None
+
+        status_qos = QoSProfile(
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+        )
+
+        self.status_subscription = node.create_subscription(
+            ChessStatus,
+            "/chess/status",
+            self._status_callback,
+            status_qos,
+        )
+        self.event_subscription = node.create_subscription(
+            ChessEvent,
+            "/chess/event",
+            self._event_callback,
+            30,
+        )
+
+    def _status_callback(
+        self,
+        msg: ChessStatus,
+    ) -> None:
+        status = {
+            "state": msg.state,
+            "player_name": msg.player_name,
+            "human_colour": msg.human_colour,
+            "k9_colour": msg.k9_colour,
+            "game_id": msg.game_id,
+            "game_active": bool(msg.game_active),
+            "game_suspended": bool(msg.game_suspended),
+            "side_to_move": msg.side_to_move,
+            "pending_move": msg.pending_move,
+            "last_move": msg.last_move,
+            "result": msg.result,
+            "fen": msg.fen,
+            "ply": int(msg.ply),
+            "engine_busy": bool(msg.engine_busy),
+            "evaluation_valid": bool(msg.evaluation_valid),
+            "evaluation_pawns": float(msg.evaluation_pawns),
+            "evaluation_is_mate": bool(msg.evaluation_is_mate),
+            "mate_in": int(msg.mate_in),
+        }
+
+        with self._lock:
+            # A new game id invalidates move-specific context from the
+            # preceding game.
+            previous_game_id = (
+                self._status.get("game_id", "")
+                if self._status is not None
+                else ""
+            )
+            if (
+                status["game_id"]
+                and previous_game_id
+                and status["game_id"] != previous_game_id
+            ):
+                self._last_k9_move = None
+                self._last_human_move = None
+                self._last_position_evaluation = None
+
+            self._status = status
+            self._received_monotonic = time.monotonic()
+
+    @staticmethod
+    def _move_event(
+        msg: ChessEvent,
+    ) -> dict:
+        return {
+            "game_id": msg.game_id,
+            "uci": msg.uci,
+            "san": msg.san,
+            "piece": msg.piece,
+            "from_square": msg.from_square,
+            "to_square": msg.to_square,
+            "captured_piece": msg.captured_piece,
+            "gives_check": bool(msg.gives_check),
+            "gives_mate": bool(msg.gives_mate),
+            "source": msg.source,
+            "evaluation_before_valid": bool(
+                msg.evaluation_before_valid
+            ),
+            "evaluation_before_pawns": float(
+                msg.evaluation_before_pawns
+            ),
+            "evaluation_after_valid": bool(
+                msg.evaluation_after_valid
+            ),
+            "evaluation_after_pawns": float(
+                msg.evaluation_after_pawns
+            ),
+            "evaluation_delta_pawns": float(
+                msg.evaluation_delta_pawns
+            ),
+            "is_mate": bool(msg.is_mate),
+            "mate_in": int(msg.mate_in),
+        }
+
+    def _event_callback(
+        self,
+        msg: ChessEvent,
+    ) -> None:
+        event_type = msg.type.strip().upper()
+
+        with self._lock:
+            if event_type == "K9_MOVE_SELECTED":
+                self._last_k9_move = self._move_event(
+                    msg
+                )
+            elif event_type == "HUMAN_MOVE":
+                self._last_human_move = self._move_event(
+                    msg
+                )
+            elif event_type == "POSITION_EVALUATED":
+                self._last_position_evaluation = {
+                    "game_id": msg.game_id,
+                    "evaluation_before_valid": bool(
+                        msg.evaluation_before_valid
+                    ),
+                    "evaluation_before_pawns": float(
+                        msg.evaluation_before_pawns
+                    ),
+                    "evaluation_after_valid": bool(
+                        msg.evaluation_after_valid
+                    ),
+                    "evaluation_after_pawns": float(
+                        msg.evaluation_after_pawns
+                    ),
+                    "evaluation_delta_pawns": float(
+                        msg.evaluation_delta_pawns
+                    ),
+                    "is_mate": bool(msg.is_mate),
+                    "mate_in": int(msg.mate_in),
+                }
+
+    @staticmethod
+    def _evaluation_text(
+        status: dict,
+    ) -> str:
+        if status["evaluation_is_mate"]:
+            mate_in = int(
+                status["mate_in"]
+            )
+
+            if mate_in > 0:
+                return (
+                    f"K9 has a forced mate in {mate_in}."
+                )
+            if mate_in < 0:
+                return (
+                    "K9 is being forced to checkmate in "
+                    f"{abs(mate_in)}."
+                )
+            return "The current position is checkmate."
+
+        if status["evaluation_valid"]:
+            return (
+                "Stockfish evaluation from K9's point of view is "
+                f"{status['evaluation_pawns']:+.2f} pawns."
+            )
+
+        return (
+            "No normal centipawn/pawn evaluation is currently available."
+        )
+
+    @staticmethod
+    def _describe_move(
+        label: str,
+        move: Optional[dict],
+    ) -> list[str]:
+        if not move:
+            return []
+
+        parts = [
+            f"{label}: "
+            f"{move.get('san') or 'SAN unavailable'} "
+            f"(UCI {move.get('uci') or 'unavailable'})."
+        ]
+
+        if move.get("piece"):
+            movement = (
+                f"{move['piece']} from "
+                f"{move.get('from_square') or '?'} to "
+                f"{move.get('to_square') or '?'}"
+            )
+            if move.get("captured_piece"):
+                movement += (
+                    f", capturing {move['captured_piece']}"
+                )
+            parts.append(movement + ".")
+
+        if move.get("source"):
+            parts.append(
+                f"Move source: {move['source']}."
+            )
+
+        if move.get("gives_mate"):
+            parts.append(
+                "That move itself gives checkmate."
+            )
+        elif move.get("gives_check"):
+            parts.append(
+                "That move gives check."
+            )
+
+        if move.get("evaluation_before_valid"):
+            parts.append(
+                "Evaluation before the move: "
+                f"{move['evaluation_before_pawns']:+.2f} pawns "
+                "from K9's perspective."
+            )
+
+        if move.get("evaluation_after_valid"):
+            parts.append(
+                "Evaluation after the move: "
+                f"{move['evaluation_after_pawns']:+.2f} pawns "
+                "from K9's perspective."
+            )
+
+        if (
+            move.get("evaluation_before_valid")
+            and move.get("evaluation_after_valid")
+        ):
+            parts.append(
+                "Evaluation change: "
+                f"{move['evaluation_delta_pawns']:+.2f} pawns."
+            )
+
+        if move.get("is_mate"):
+            mate_in = int(
+                move.get("mate_in", 0)
+            )
+            if mate_in > 0:
+                parts.append(
+                    f"Resulting position has a K9 forced mate in {mate_in}."
+                )
+            elif mate_in < 0:
+                parts.append(
+                    "Resulting position has K9 being forced to "
+                    f"checkmate in {abs(mate_in)}."
+                )
+            else:
+                parts.append(
+                    "Resulting position is mate."
+                )
+
+        return parts
+
+    def system_message(
+        self,
+    ) -> Optional[dict]:
+        with self._lock:
+            if self._status is None:
+                return None
+
+            status = dict(
+                self._status
+            )
+            age = (
+                time.monotonic()
+                - self._received_monotonic
+            )
+            last_k9_move = (
+                dict(self._last_k9_move)
+                if self._last_k9_move is not None
+                else None
+            )
+            last_human_move = (
+                dict(self._last_human_move)
+                if self._last_human_move is not None
+                else None
+            )
+            last_position_eval = (
+                dict(self._last_position_evaluation)
+                if self._last_position_evaluation is not None
+                else None
+            )
+
+        state = str(
+            status["state"]
+            or ""
+        ).upper()
+
+        active_states = {
+            "SETUP",
+            "STARTING",
+            "WAITING_FOR_CHALLENGE",
+            "ACTIVE",
+            "SUSPENDED",
+        }
+
+        if state not in active_states:
+            if not (
+                state == "FINISHED"
+                and age <= self.FINISHED_CONTEXT_TTL_SEC
+            ):
+                return None
+
+        lines = [
+            "A physical chess game is part of the current interaction. "
+            "The following data comes from K9's deterministic chess subsystem "
+            "and is authoritative. Do not invent a different board state, "
+            "move, legality result, evaluation, colour or game result.",
+            f"Chess state: {state}",
+            f"Opponent's real name: {status['player_name'] or 'unknown'}",
+            f"Human colour: {status['human_colour'] or 'unknown'}",
+            f"K9 colour: {status['k9_colour'] or 'unknown'}",
+            f"Side to move: {status['side_to_move'] or 'unknown'}",
+            f"Last move in game history (UCI): {status['last_move'] or 'none'}",
+            f"Pending K9 move (UCI): {status['pending_move'] or 'none'}",
+            f"FEN: {status['fen'] or 'unavailable'}",
+            f"Ply: {status['ply']}",
+            f"Engine busy: {status['engine_busy']}",
+            self._evaluation_text(status),
+            f"Result/status: {status['result'] or 'game not finished'}",
+        ]
+
+        # Include move-specific evidence so questions such as "why did you
+        # move that knight?" have more than the current FEN to work from.
+        if (
+            last_k9_move
+            and (
+                not status["game_id"]
+                or last_k9_move.get("game_id") == status["game_id"]
+            )
+        ):
+            lines.extend(
+                self._describe_move(
+                    "Most recent K9 selected move",
+                    last_k9_move,
+                )
+            )
+
+        if (
+            last_human_move
+            and (
+                not status["game_id"]
+                or last_human_move.get("game_id") == status["game_id"]
+            )
+        ):
+            lines.extend(
+                self._describe_move(
+                    "Most recent human move",
+                    last_human_move,
+                )
+            )
+
+        if (
+            last_position_eval
+            and last_position_eval.get("game_id") == status["game_id"]
+        ):
+            if (
+                last_position_eval["evaluation_before_valid"]
+                and last_position_eval["evaluation_after_valid"]
+            ):
+                lines.append(
+                    "Most recent measured evaluation change: "
+                    f"{last_position_eval['evaluation_delta_pawns']:+.2f} "
+                    "pawns from K9's perspective."
+                )
+            elif last_position_eval["is_mate"]:
+                lines.append(
+                    "The most recent position evaluation was a forced-mate "
+                    f"score with signed mate distance "
+                    f"{last_position_eval['mate_in']}."
+                )
+
+        lines.append(
+            "When answering a chess question, use these facts and K9's normal "
+            "personality. Explain strategy only to the extent supported by "
+            "the position/move/evaluation data; say when a reason is an "
+            "inference rather than an engine-provided explanation. If the "
+            "question is unrelated to chess, ignore the chess context and "
+            "answer normally."
+        )
+
+        return {
+            "role": "system",
+            "content": "\n".join(lines),
+        }

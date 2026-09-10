@@ -1,6 +1,6 @@
 voice_piper:
   ros__parameters:
-    model_path: /home/hopkira/k9_piper_voice/k9_model.onnx
+    model_path: /home/hopkira/k9_piper_voice/k9_2449_model.onnx
     config_path: ""
     use_cuda: false
 

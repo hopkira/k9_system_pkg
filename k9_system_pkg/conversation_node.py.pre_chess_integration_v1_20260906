@@ -13,7 +13,6 @@ from std_msgs.msg import String
 from std_srvs.srv import Trigger
 
 from k9_interfaces_pkg.msg import IntentResult
-from k9_system_pkg.chess_conversation_context import ChessConversationContext
 
 
 class K9ConversationNode(Node):
@@ -31,9 +30,6 @@ class K9ConversationNode(Node):
     def __init__(self):
         super().__init__('k9_conversation')
 
-
-        # Dynamic authoritative chess context; never stored in LLM history.
-        self.chess_context = ChessConversationContext(self)
         # ------------------------------------------------------------------
         # Parameters
         # ------------------------------------------------------------------
@@ -225,9 +221,6 @@ class K9ConversationNode(Node):
         with self.history_lock:
             messages = list(self.history)
 
-            chess_system_message = self.chess_context.system_message()
-            if chess_system_message is not None:
-                messages.insert(0, chess_system_message)
         messages.append({
             'role': 'user',
             'content': text

@@ -48,7 +48,6 @@ def launch_nodes(context):
     platform = LaunchConfiguration('platform').perform(context)
     log_level = LaunchConfiguration('log_level')
 
-    enable_chess = LaunchConfiguration('enable_chess').perform(context).lower() in ('1', 'true', 'yes', 'on')
     # ------------------------------------------------------------------
     # Select the nodes belonging to this K9 computer.
     # ------------------------------------------------------------------
@@ -219,24 +218,6 @@ def launch_nodes(context):
     # K9 nodes together.
     # ------------------------------------------------------------------
 
-    # Chess is a Jetson-side overlay. Keep engine/manager configuration in the
-    # chess package's own launch description.
-    if run_bt and enable_chess:
-        chess_share = get_package_share_directory(
-            'k9_chess_pkg'
-        )
-        nodes.append(
-            IncludeLaunchDescription(
-                PythonLaunchDescriptionSource(
-                    os.path.join(
-                        chess_share,
-                        'launch',
-                        'chess.launch.py',
-                    )
-                )
-            )
-        )
-
     if run_bt:
 
         nodes.append(
@@ -273,22 +254,6 @@ def generate_launch_description():
             description=(
                 'Logging level: debug, info, warn, error, fatal'
             ),
-        ),
-
-        DeclareLaunchArgument(
-
-            'enable_chess',
-
-            default_value='true',
-
-            description=(
-
-                'Launch k9_chess_pkg on Jetson/all platforms '
-
-                '(true/false)'
-
-            ),
-
         ),
 
         OpaqueFunction(
