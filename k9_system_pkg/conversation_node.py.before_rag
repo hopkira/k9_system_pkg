@@ -14,6 +14,7 @@ from rclpy.node import Node
 from std_msgs.msg import String
 from std_srvs.srv import Trigger
 
+from k9_interfaces_pkg.msg import IntentResult
 from k9_system_pkg.chess_conversation_context import ChessConversationContext
 
 
@@ -95,13 +96,11 @@ class K9ConversationNode(Node):
             10
         )
 
-        self.conversation_request_sub = (
-            self.create_subscription(
-                String,
-                '/conversation/request',
-                self.conversation_request_callback,
-                10,
-            )
+        self.intent_sub = self.create_subscription(
+            IntentResult,
+            '/intent/result',
+            self.intent_callback,
+            10
         )
 
 
@@ -154,100 +153,44 @@ class K9ConversationNode(Node):
     # ROS callbacks
     # ----------------------------------------------------------------------
 
-    def conversation_request_callback(
-        self,
-        msg: String,
-    ):
+    def intent_callback(self, msg: IntentResult):
         """
-        Receive one BT-authorised conversation request.
+        Receive an intent classification.
 
-        The Behaviour Tree has already performed optional RAG retrieval
-        before this message is published.
+        Only GENERAL_CONVERSATION intents requiring a response are
+        handled by this node.
         """
 
-        try:
-
-            payload = json.loads(
-                msg.data
-            )
-
-        except json.JSONDecodeError:
-
-            self.get_logger().warning(
-                'Malformed /conversation/request JSON'
-            )
-
+        if msg.intent != self.accepted_intent:
             return
 
-        text = str(
-            payload.get(
-                'text',
-                ''
-            )
-        ).strip()
+        if not msg.requires_response:
+            return
+
+        text = msg.text.strip()
 
         if not text:
-
             self.get_logger().warning(
-                'Conversation request has empty text'
+                'Received GENERAL_CONVERSATION intent with empty text'
             )
-
             return
 
-        rag_context = str(
-            payload.get(
-                'rag_context',
-                ''
-            )
-        ).strip()
-
-        rag_source = str(
-            payload.get(
-                'rag_source',
-                ''
-            )
-        ).strip()
-
-        try:
-
-            rag_score = float(
-                payload.get(
-                    'rag_score',
-                    0.0,
-                )
-                or 0.0
-            )
-
-        except (
-            TypeError,
-            ValueError,
-        ):
-
-            rag_score = 0.0
-
         self.get_logger().info(
-            f'Conversation request: "{text}" '
-            f'RAG={"yes" if rag_context else "no"}'
+            f'Conversation request: "{text}"'
         )
 
         try:
-
             self.request_queue.put_nowait(
-                {
-                    'kind': 'conversation',
-                    'text': text,
-                    'request_id': '',
-                    'rag_context': rag_context,
-                    'rag_source': rag_source,
-                    'rag_score': rag_score,
-                }
-            )
+            {
+                "kind": "conversation",
+                "text": text,
+                "request_id": "",
+            }
+        )
 
         except queue.Full:
-
             self.get_logger().warning(
-                'Conversation request queue full; '
-                'dropping utterance'
+                'Conversation request queue full; dropping utterance'
             )
 
     def chess_reaction_callback(self, msg: String):
@@ -378,29 +321,7 @@ class K9ConversationNode(Node):
                             request_id,
                         )
                     else:
-
-                        self.process_utterance(
-                            text,
-                            rag_context=str(
-                                item.get(
-                                    'rag_context',
-                                    ''
-                                )
-                            ).strip(),
-                            rag_source=str(
-                                item.get(
-                                    'rag_source',
-                                    ''
-                                )
-                            ).strip(),
-                            rag_score=float(
-                                item.get(
-                                    'rag_score',
-                                    0.0
-                                )
-                                or 0.0
-                            ),
-                        )
+                        self.process_utterance(text)
             except Exception as exc:
                 self.get_logger().error(
                     f'Unexpected conversation error: {exc}'
@@ -409,65 +330,18 @@ class K9ConversationNode(Node):
             finally:
                 self.request_queue.task_done()
 
-    def process_utterance(
-        self,
-        text: str,
-        *,
-        rag_context: str = '',
-        rag_source: str = '',
-        rag_score: float = 0.0,
-    ):
-        """
-        Send one utterance plus conversation history and optional
-        turn-specific long-term memory to Ollama.
-        """
+    def process_utterance(self, text: str):
+        """Send one utterance plus history to Ollama."""
 
         with self.history_lock:
+            messages = list(self.history)
 
-            messages = list(
-                self.history
-            )
-
-            system_messages = list(
+            chess_system_messages = (
                 self.chess_context.system_messages()
             )
-
-            if rag_context:
-
-                memory_prompt = (
-                    "RELEVANT LONG-TERM MEMORY\n\n"
-                    f"{rag_context}\n\n"
-                    "This is one remembered event selected because it "
-                    "may help answer the user's current question. "
-                    "Use it when relevant. Treat it as one coherent "
-                    "memory. Do not combine it with other events and "
-                    "do not invent additional factual details."
-                )
-
-                if rag_source:
-
-                    memory_prompt += (
-                        "\n\nMemory source: "
-                        f"{rag_source}"
-                    )
-
-                system_messages.append(
-                    {
-                        'role': 'system',
-                        'content': memory_prompt,
-                    }
-                )
-
-                self.get_logger().info(
-                    "RAG context attached: "
-                    f"source={rag_source or 'unknown'}, "
-                    f"score={rag_score:.3f}"
-                )
-
-            if system_messages:
-
+            if chess_system_messages:
                 messages = (
-                    system_messages
+                    chess_system_messages
                     + messages
                 )
         messages.append({
