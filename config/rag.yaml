@@ -7,7 +7,7 @@ k9_rag:
 
     # First stage: retrieve five candidates from Chroma.
     candidate_count: 5
-    min_embedding_score: -1.0
+    min_embedding_score: 0.3
 
     query_instruction: >-
       Retrieve relevant passages from K9's long-term memory that help answer
@@ -17,9 +17,6 @@ k9_rag:
     reranker_path: "~/k9_models/Qwen3-Reranker-0.6B"
     reranker_device: "auto"
     reranker_max_length: 2048
-
-    # Initial value: tune using real K9 queries.
-    min_reranker_score: 0.0
 
     # If runtime reranking fails, keep K9 conversational by using the
     # strongest embedding candidate. A missing model still fails at startup.

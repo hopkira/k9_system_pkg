@@ -47,7 +47,6 @@ class K9RagNode(Node):
         )
         self.declare_parameter("reranker_device", "auto")
         self.declare_parameter("reranker_max_length", 2048)
-        self.declare_parameter("min_reranker_score", 0.50)
         self.declare_parameter("fallback_to_embedding", True)
         self.declare_parameter(
             "reranker_instruction",
@@ -86,9 +85,6 @@ class K9RagNode(Node):
         self.reranker_max_length = max(
             256,
             int(self.get_parameter("reranker_max_length").value),
-        )
-        self.min_reranker_score = float(
-            self.get_parameter("min_reranker_score").value
         )
         self.fallback_to_embedding = bool(
             self.get_parameter("fallback_to_embedding").value
@@ -414,24 +410,9 @@ class K9RagNode(Node):
                     key=lambda item: item["reranker_score"],
                 )
 
-                min_reranker_score = float(
-                    self.get_parameter(
-                        "min_reranker_score"
-                    ).value
+                final_score = float(
+                    best["reranker_score"]
                 )
-
-                if best["reranker_score"] < min_reranker_score:
-                    response.success = True
-                    response.error = ""
-                    self.get_logger().info(
-                        "RAG: best reranker score "
-                        f"{best['reranker_score']:.3f} below threshold "
-                        f"{min_reranker_score:.3f}: "
-                        f"{query[:80]}"
-                    )
-                    return response
-
-                final_score = float(best["reranker_score"])
 
             except Exception as exc:
                 if not self.fallback_to_embedding:
