@@ -5,10 +5,8 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
-    GroupAction,
     IncludeLaunchDescription,
     OpaqueFunction,
-    SetEnvironmentVariable,
 )
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
@@ -29,6 +27,9 @@ K9_VENV_SITE_PACKAGES = os.path.join(
     'site-packages',
 )
 
+PHANTOM_CHESSBOARD_SRC = os.path.expanduser(
+    '~/phantom_chessboard/src'
+)
 
 PI_NODES = [
     'back_lights',
@@ -262,70 +263,115 @@ def launch_nodes(context):
     # K9 nodes together.
     # ------------------------------------------------------------------
 
-    # Chess is a Jetson-side overlay. Keep engine/manager configuration in the
-    # chess package's own launch description.
+# ------------------------------------------------------------------
+# Chess subsystem.
+#
+# Keep all K9 runtime nodes under this single top-level launch file.
+# The Phantom adapter needs both the K9 virtual environment and the
+# standalone phantom_chessboard source tree on PYTHONPATH.
+# ------------------------------------------------------------------
+
     if run_bt and enable_chess:
 
         chess_share = get_package_share_directory(
             'k9_chess_pkg'
         )
 
-        existing_pythonpath = os.environ.get(
-            'PYTHONPATH',
-            ''
+        chess_config = os.path.join(
+            chess_share,
+            'config',
+            'chess.yaml',
         )
 
-        existing_path = os.environ.get(
-            'PATH',
-            ''
+        phantom_config = os.path.join(
+            chess_share,
+            'config',
+            'phantom_board.yaml',
         )
 
-        chess_pythonpath = (
-            K9_VENV_SITE_PACKAGES
-            + (
-                os.pathsep + existing_pythonpath
-                if existing_pythonpath
-                else ''
+        # --------------------------------------------------------------
+        # Chess engine.
+        # --------------------------------------------------------------
+
+        nodes.append(
+            Node(
+                package='k9_chess_pkg',
+                executable='chess_engine',
+                name='chess_engine',
+                output='both',
+                emulate_tty=True,
+                parameters=[
+                    chess_config,
+                ],
+                arguments=[
+                    '--ros-args',
+                    '--log-level',
+                    log_level,
+                ],
+                additional_env=(
+                    k9_venv_environment()
+                ),
             )
         )
 
-        chess_path = (
-            os.path.join(
-                K9_VENV,
-                'bin',
+        # --------------------------------------------------------------
+        # Chess manager.
+        # --------------------------------------------------------------
+
+        nodes.append(
+            Node(
+                package='k9_chess_pkg',
+                executable='chess_manager',
+                name='chess_manager',
+                output='both',
+                emulate_tty=True,
+                parameters=[
+                    chess_config,
+                ],
+                arguments=[
+                    '--ros-args',
+                    '--log-level',
+                    log_level,
+                ],
+                additional_env=(
+                    k9_venv_environment()
+                ),
             )
+        )
+
+        # --------------------------------------------------------------
+        # Phantom Chessboard adapter.
+        #
+        # This node uses the standalone phantom_chessboard Python package
+        # as well as dependencies from the K9 venv.
+        # --------------------------------------------------------------
+
+        phantom_env = (
+            k9_venv_environment()
+        )
+
+        phantom_env['PYTHONPATH'] = (
+            PHANTOM_CHESSBOARD_SRC
             + os.pathsep
-            + existing_path
+            + phantom_env['PYTHONPATH']
         )
 
         nodes.append(
-            GroupAction(
-                actions=[
-                    SetEnvironmentVariable(
-                        name='VIRTUAL_ENV',
-                        value=K9_VENV,
-                    ),
-
-                    SetEnvironmentVariable(
-                        name='PATH',
-                        value=chess_path,
-                    ),
-
-                    SetEnvironmentVariable(
-                        name='PYTHONPATH',
-                        value=chess_pythonpath,
-                    ),
-
-                    IncludeLaunchDescription(
-                        PythonLaunchDescriptionSource(
-                            os.path.join(
-                                chess_share,
-                                'launch',
-                                'chess.launch.py',
-                            )
-                        )
-                    ),
-                ]
+            Node(
+                package='k9_chess_pkg',
+                executable='phantom_board',
+                name='phantom_board',
+                output='both',
+                emulate_tty=True,
+                parameters=[
+                    phantom_config,
+                ],
+                arguments=[
+                    '--ros-args',
+                    '--log-level',
+                    log_level,
+                ],
+                additional_env=phantom_env,
             )
         )
 
