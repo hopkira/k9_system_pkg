@@ -1,0 +1,17 @@
+k9_rag:
+  ros__parameters:
+    ollama_host: "http://127.0.0.1:11434"
+    embed_model: "qwen3-embedding:4b"
+    database_path: "~/k9_data/chroma_db"
+    collection_name: "k9_ltm_qwen3_4b"
+
+    # 0 in a service request means use this value.
+    default_max_results: 5
+
+    # Initial value only. Watch real scores and tune after testing.
+    min_score: 0.30
+
+    # Qwen3-Embedding instructions are applied to queries, not stored documents.
+    query_instruction: >-
+      Retrieve relevant passages from K9's long-term memory that help answer
+      the user's question.

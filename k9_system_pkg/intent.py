@@ -251,11 +251,21 @@ class K9IntentNode(Node):
         context = context or {}
         normal = self._normalise(text)
 
+        # STOP_LISTENING is a global executive command and must never be
+        # consumed as an answer to a contextual workflow such as chess setup
+        # or face enrolment.
+        command = self._classify_command(normal)
+
+        if (
+            command is not None
+            and command.intent == "STOP_LISTENING"
+        ):
+            return command
+
         contextual = self._classify_contextual(text, normal, context)
         if contextual is not None:
             return contextual
 
-        command = self._classify_command(normal)
         if command is not None:
             return command
 
@@ -357,6 +367,15 @@ class K9IntentNode(Node):
         in_setup = chess_state in {"SETUP", "SETTING_UP"} or bool(setup_step)
         if not in_setup:
             return None
+
+        # Chess setup deliberately allows unrelated conversation while waiting
+        # for an answer.  It must also allow explicit executive commands to
+        # escape the setup context rather than interpreting short commands as
+        # names (for example "stop listening" -> "Stop Listening").
+        command = self._classify_command(normal)
+
+        if command is not None:
+            return command
 
         if setup_step in {
             "WAIT_COLOUR",

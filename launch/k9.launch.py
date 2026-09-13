@@ -47,6 +47,7 @@ JETSON_NODES = [
     'face_detector',
     'face_tracker',
     'face_recogniser',
+    'k9_rag',
 ]
 
 
