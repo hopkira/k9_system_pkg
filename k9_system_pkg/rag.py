@@ -205,6 +205,7 @@ class K9RagNode(Node):
         response = self.ollama_client.embed(
             model=self.embed_model,
             input=self._format_embedding_query(query),
+            keep_alive=0,
         )
 
         embeddings = getattr(response, "embeddings", None)
@@ -288,16 +289,11 @@ class K9RagNode(Node):
         query: str,
         candidates: Sequence[Dict[str, Any]],
     ) -> List[float]:
+
         if not candidates:
             return []
 
-        pairs = [
-            self._format_reranker_pair(
-                query,
-                candidate["document"],
-            )
-            for candidate in candidates
-        ]
+        scores: List[float] = []
 
         payload_max_length = (
             self.reranker_max_length
@@ -306,56 +302,102 @@ class K9RagNode(Node):
         )
 
         if payload_max_length <= 0:
-            raise RuntimeError("reranker_max_length is too small")
+            raise RuntimeError(
+                "reranker_max_length is too small"
+            )
 
-        tokenized = self.reranker_tokenizer(
-            pairs,
-            padding=False,
-            truncation="longest_first",
-            return_attention_mask=False,
-            max_length=payload_max_length,
-        )
+        for candidate in candidates:
 
-        for index, token_ids in enumerate(tokenized["input_ids"]):
-            tokenized["input_ids"][index] = (
+            pair = self._format_reranker_pair(
+                query,
+                candidate["document"],
+            )
+
+            tokenized = self.reranker_tokenizer(
+                pair,
+                padding=False,
+                truncation=True,
+                return_attention_mask=False,
+                max_length=payload_max_length,
+            )
+
+            input_ids = (
                 self.reranker_prefix_tokens
-                + token_ids
+                + tokenized["input_ids"]
                 + self.reranker_suffix_tokens
             )
 
-        inputs = self.reranker_tokenizer.pad(
-            tokenized,
-            padding=True,
-            return_tensors="pt",
-        )
-
-        inputs = {
-            key: value.to(self.reranker_device)
-            for key, value in inputs.items()
-        }
-
-        with torch.inference_mode():
-            final_logits = self.reranker_model(
-                **inputs
-            ).logits[:, -1, :]
-
-            true_vector = final_logits[:, self.true_token_id]
-            false_vector = final_logits[:, self.false_token_id]
-
-            yes_no_logits = torch.stack(
-                [false_vector, true_vector],
-                dim=1,
+            inputs = self.reranker_tokenizer.pad(
+                {
+                    "input_ids": [
+                        input_ids
+                    ]
+                },
+                padding=True,
+                return_tensors="pt",
             )
 
-            probabilities = torch.softmax(
-                yes_no_logits,
-                dim=1,
-            )[:, 1]
+            inputs = {
+                key: value.to(
+                    self.reranker_device
+                )
+                for key, value in inputs.items()
+            }
 
-        return [
-            float(score)
-            for score in probabilities.detach().cpu().tolist()
-        ]
+            with torch.inference_mode():
+
+                final_logits = (
+                    self.reranker_model(
+                        **inputs
+                    ).logits[:, -1, :]
+                )
+
+                true_vector = final_logits[
+                    :,
+                    self.true_token_id,
+                ]
+
+                false_vector = final_logits[
+                    :,
+                    self.false_token_id,
+                ]
+
+                yes_no_logits = torch.stack(
+                    [
+                        false_vector,
+                        true_vector,
+                    ],
+                    dim=1,
+                )
+
+                probability = torch.softmax(
+                    yes_no_logits,
+                    dim=1,
+                )[0, 1]
+
+                scores.append(
+                    float(
+                        probability.detach().cpu()
+                    )
+                )
+
+            # Release temporary tensors before evaluating
+            # the next candidate.
+            del inputs
+            del final_logits
+            del true_vector
+            del false_vector
+            del yes_no_logits
+            del probability
+
+            if (
+                self.reranker_device == "cuda"
+                and torch.cuda.is_available()
+            ):
+                torch.cuda.empty_cache()
+
+        return scores
+    
 
     def retrieve_callback(
         self,
