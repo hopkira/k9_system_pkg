@@ -50,6 +50,37 @@ JETSON_NODES = [
     'k9_rag',
 ]
 
+def k9_venv_environment():
+    existing_pythonpath = os.environ.get(
+        'PYTHONPATH',
+        ''
+    )
+
+    existing_path = os.environ.get(
+        'PATH',
+        ''
+    )
+
+    pythonpath = K9_VENV_SITE_PACKAGES
+
+    if existing_pythonpath:
+        pythonpath += (
+            os.pathsep
+            + existing_pythonpath
+        )
+
+    return {
+        'VIRTUAL_ENV': K9_VENV,
+        'PATH': (
+            os.path.join(
+                K9_VENV,
+                'bin',
+            )
+            + os.pathsep
+            + existing_path
+        ),
+        'PYTHONPATH': pythonpath,
+    }
 
 def launch_nodes(context):
     """Create the set of K9 nodes appropriate for the selected computer."""
@@ -171,23 +202,26 @@ def launch_nodes(context):
                 hotword_config
             ]
 
-            existing_pythonpath = os.environ.get(
-                'PYTHONPATH',
-                ''
+            node_args['additional_env'] = (
+                k9_venv_environment()
             )
 
-            node_args['additional_env'] = {
-                'PYTHONPATH': (
-                    K9_VENV_SITE_PACKAGES
-                    + os.pathsep
-                    + existing_pythonpath
-                )
-            }
-
-            # Hotword is a fundamental sensor node. Restart it
-            # automatically if ALSA or Sherpa fails.
             node_args['respawn'] = True
             node_args['respawn_delay'] = 2.0
+
+        elif name == 'k9_rag':
+
+            node_args['parameters'] = [
+                os.path.join(
+                    k9_system_share,
+                    'config',
+                    'rag.yaml',
+                )
+            ]
+
+            node_args['additional_env'] = (
+                k9_venv_environment()
+            )
 
         elif name == 'eye_camera':
 

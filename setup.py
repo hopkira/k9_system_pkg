@@ -48,7 +48,7 @@ setup(
             'intent = k9_system_pkg.intent:main',
             'conversation = k9_system_pkg.conversation_node:main',
             'eye_camera = k9_system_pkg.eye_camera_node:main',
-            'k9_rag = k9_system_pkg.k9_rag:main',
+            'k9_rag = k9_system_pkg.rag:main',
         ],
     },
 )
