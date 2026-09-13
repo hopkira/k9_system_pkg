@@ -205,7 +205,7 @@ class K9RagNode(Node):
         response = self.ollama_client.embed(
             model=self.embed_model,
             input=self._format_embedding_query(query),
-            keep_alive=0,
+            keep_alive="5m",
         )
 
         embeddings = getattr(response, "embeddings", None)
