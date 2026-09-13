@@ -5,13 +5,26 @@ k9_rag:
     database_path: "~/k9_data/chroma_db"
     collection_name: "k9_ltm_qwen3_4b"
 
-    # 0 in a service request means use this value.
-    default_max_results: 5
+    # First stage: retrieve five candidates from Chroma.
+    candidate_count: 5
+    min_embedding_score: -1.0
 
-    # Initial value only. Watch real scores and tune after testing.
-    min_score: 0.30
-
-    # Qwen3-Embedding instructions are applied to queries, not stored documents.
     query_instruction: >-
       Retrieve relevant passages from K9's long-term memory that help answer
       the user's question.
+
+    # Second stage: rerank locally and return only the best passage.
+    reranker_path: "~/k9_models/Qwen3-Reranker-0.6B"
+    reranker_device: "auto"
+    reranker_max_length: 2048
+
+    # Initial value: tune using real K9 queries.
+    min_reranker_score: 0.0
+
+    # If runtime reranking fails, keep K9 conversational by using the
+    # strongest embedding candidate. A missing model still fails at startup.
+    fallback_to_embedding: true
+
+    reranker_instruction: >-
+      Given a question about K9's history or knowledge, determine whether the
+      document contains information that directly helps answer the question.

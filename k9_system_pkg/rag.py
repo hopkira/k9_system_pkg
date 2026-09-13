@@ -1,20 +1,31 @@
-\
 #!/usr/bin/env python3
 
 import json
 import os
-from typing import Any, List
+from pathlib import Path
+from typing import Any, Dict, List, Sequence
+
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 
 import chromadb
 import ollama
 import rclpy
+import torch
 from rclpy.node import Node
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from k9_interfaces_pkg.srv import RetrieveKnowledge
 
 
 class K9RagNode(Node):
-    """ROS 2 service providing semantic retrieval from K9's long-term memory."""
+    """
+    K9 long-term-memory retrieval service.
+
+    Pipeline:
+        query -> Qwen3 embedding -> Chroma top-N ->
+        Qwen3 reranker -> single best passage.
+    """
 
     def __init__(self) -> None:
         super().__init__("k9_rag")
@@ -23,11 +34,28 @@ class K9RagNode(Node):
         self.declare_parameter("embed_model", "qwen3-embedding:4b")
         self.declare_parameter("database_path", "~/k9_data/chroma_db")
         self.declare_parameter("collection_name", "k9_ltm_qwen3_4b")
-        self.declare_parameter("default_max_results", 5)
-        self.declare_parameter("min_score", 0.30)
+        self.declare_parameter("candidate_count", 5)
+        self.declare_parameter("min_embedding_score", 0.30)
         self.declare_parameter(
             "query_instruction",
             "Retrieve relevant passages from K9's long-term memory that help answer the user's question.",
+        )
+
+        self.declare_parameter(
+            "reranker_path",
+            "~/k9_models/Qwen3-Reranker-0.6B",
+        )
+        self.declare_parameter("reranker_device", "auto")
+        self.declare_parameter("reranker_max_length", 2048)
+        self.declare_parameter("min_reranker_score", 0.50)
+        self.declare_parameter("fallback_to_embedding", True)
+        self.declare_parameter(
+            "reranker_instruction",
+            (
+                "Given a question about K9's history or knowledge, determine "
+                "whether the document contains information that directly helps "
+                "answer the question."
+            ),
         )
 
         self.ollama_host = str(self.get_parameter("ollama_host").value)
@@ -36,25 +64,58 @@ class K9RagNode(Node):
             str(self.get_parameter("database_path").value)
         )
         self.collection_name = str(self.get_parameter("collection_name").value)
-        self.default_max_results = int(
-            self.get_parameter("default_max_results").value
+        self.candidate_count = max(
+            1,
+            int(self.get_parameter("candidate_count").value),
         )
-        self.min_score = float(self.get_parameter("min_score").value)
+        self.min_embedding_score = float(
+            self.get_parameter("min_embedding_score").value
+        )
         self.query_instruction = str(
             self.get_parameter("query_instruction").value
+        )
+
+        self.reranker_path = Path(
+            os.path.expanduser(
+                str(self.get_parameter("reranker_path").value)
+            )
+        )
+        self.reranker_device_parameter = str(
+            self.get_parameter("reranker_device").value
+        )
+        self.reranker_max_length = max(
+            256,
+            int(self.get_parameter("reranker_max_length").value),
+        )
+        self.min_reranker_score = float(
+            self.get_parameter("min_reranker_score").value
+        )
+        self.fallback_to_embedding = bool(
+            self.get_parameter("fallback_to_embedding").value
+        )
+        self.reranker_instruction = str(
+            self.get_parameter("reranker_instruction").value
         )
 
         os.makedirs(self.database_path, exist_ok=True)
 
         self.ollama_client = ollama.Client(host=self.ollama_host)
-        self.chroma_client = chromadb.PersistentClient(path=self.database_path)
-
-        # Qwen/Ollama embeddings are normalized; cosine distance therefore gives
-        # a natural similarity measure for retrieval.
+        self.chroma_client = chromadb.PersistentClient(
+            path=self.database_path
+        )
         self.collection = self.chroma_client.get_or_create_collection(
             name=self.collection_name,
             metadata={"hnsw:space": "cosine"},
         )
+
+        self.reranker_device = self._select_reranker_device()
+
+        self.get_logger().info(
+            "Loading local Qwen reranker from "
+            f"{self.reranker_path} on {self.reranker_device}"
+        )
+
+        self._load_reranker()
 
         self.service = self.create_service(
             RetrieveKnowledge,
@@ -63,20 +124,91 @@ class K9RagNode(Node):
         )
 
         self.get_logger().info(
-            f"K9 RAG ready: model={self.embed_model}, "
+            "K9 RAG ready: "
+            f"embedding={self.embed_model}, "
+            "reranker=Qwen3-Reranker-0.6B, "
+            f"candidates={self.candidate_count}, "
+            "returns=1, "
             f"collection={self.collection_name}, "
             f"documents={self.collection.count()}"
         )
 
-    def _format_query(self, query: str) -> str:
-        # Qwen3-Embedding recommends an instruction for retrieval queries,
-        # while documents themselves are embedded without the instruction.
-        return f"Instruct: {self.query_instruction}\nQuery:{query}"
+    def _select_reranker_device(self) -> str:
+        requested = self.reranker_device_parameter.strip().lower()
+
+        if requested == "auto":
+            return "cuda" if torch.cuda.is_available() else "cpu"
+
+        if requested == "cuda" and not torch.cuda.is_available():
+            raise RuntimeError(
+                "reranker_device is 'cuda' but torch.cuda.is_available() is false"
+            )
+
+        return requested
+
+    def _load_reranker(self) -> None:
+        if not self.reranker_path.is_dir():
+            raise RuntimeError(
+                "Local reranker model not found at "
+                f"{self.reranker_path}. Run download_reranker.py once."
+            )
+
+        self.reranker_tokenizer = AutoTokenizer.from_pretrained(
+            str(self.reranker_path),
+            padding_side="left",
+            local_files_only=True,
+        )
+
+        self.reranker_model = AutoModelForCausalLM.from_pretrained(
+            str(self.reranker_path),
+            torch_dtype="auto",
+            local_files_only=True,
+        ).to(self.reranker_device)
+
+        self.reranker_model.eval()
+
+        self.false_token_id = (
+            self.reranker_tokenizer.convert_tokens_to_ids("no")
+        )
+        self.true_token_id = (
+            self.reranker_tokenizer.convert_tokens_to_ids("yes")
+        )
+
+        prefix = (
+            "<|im_start|>system\n"
+            "Judge whether the Document meets the requirements based on "
+            "the Query and the Instruct provided. Note that the answer "
+            "can only be \"yes\" or \"no\"."
+            "<|im_end|>\n"
+            "<|im_start|>user\n"
+        )
+        suffix = (
+            "<|im_end|>\n"
+            "<|im_start|>assistant\n"
+            "<think>\n\n</think>\n\n"
+        )
+
+        self.reranker_prefix_tokens = self.reranker_tokenizer.encode(
+            prefix,
+            add_special_tokens=False,
+        )
+        self.reranker_suffix_tokens = self.reranker_tokenizer.encode(
+            suffix,
+            add_special_tokens=False,
+        )
+
+        self.get_logger().info("Qwen reranker loaded successfully")
+
+    def _format_embedding_query(self, query: str) -> str:
+        return (
+            f"Instruct: {self.query_instruction}\n"
+            f"Query:{query}"
+        )
 
     def _embed_query(self, query: str) -> List[float]:
         response = self.ollama_client.embed(
             model=self.embed_model,
-            input=self._format_query(query),
+            input=self._format_embedding_query(query),
         )
 
         embeddings = getattr(response, "embeddings", None)
@@ -92,6 +224,143 @@ class K9RagNode(Node):
     def _similarity_from_cosine_distance(distance: float) -> float:
         return 1.0 - float(distance)
 
+    def _retrieve_candidates(
+        self,
+        query: str,
+        count: int,
+    ) -> List[Dict[str, Any]]:
+        if self.collection.count() == 0:
+            return []
+
+        query_embedding = self._embed_query(query)
+
+        results = self.collection.query(
+            query_embeddings=[query_embedding],
+            n_results=min(count, self.collection.count()),
+            include=["documents", "metadatas", "distances"],
+        )
+
+        ids = (results.get("ids") or [[]])[0]
+        documents = (results.get("documents") or [[]])[0]
+        metadatas = (results.get("metadatas") or [[]])[0]
+        distances = (results.get("distances") or [[]])[0]
+
+        candidates: List[Dict[str, Any]] = []
+
+        for rank, (doc_id, document, metadata, distance) in enumerate(
+            zip(ids, documents, metadatas, distances),
+            start=1,
+        ):
+            embedding_score = self._similarity_from_cosine_distance(
+                distance
+            )
+
+            min_embedding_score = float(
+                self.get_parameter(
+                    "min_embedding_score"
+                ).value
+            )
+
+            if embedding_score < min_embedding_score:
+                continue
+
+            candidates.append(
+                {
+                    "id": str(doc_id),
+                    "document": document or "",
+                    "metadata": metadata or {},
+                    "embedding_score": embedding_score,
+                    "embedding_rank": rank,
+                }
+            )
+
+        return candidates
+
+    def _format_reranker_pair(
+        self,
+        query: str,
+        document: str,
+    ) -> str:
+        return (
+            f"<Instruct>: {self.reranker_instruction}\n"
+            f"<Query>: {query}\n"
+            f"<Document>: {document}"
+        )
+
+    def _rerank(
+        self,
+        query: str,
+        candidates: Sequence[Dict[str, Any]],
+    ) -> List[float]:
+        if not candidates:
+            return []
+
+        pairs = [
+            self._format_reranker_pair(
+                query,
+                candidate["document"],
+            )
+            for candidate in candidates
+        ]
+
+        payload_max_length = (
+            self.reranker_max_length
+            - len(self.reranker_prefix_tokens)
+            - len(self.reranker_suffix_tokens)
+        )
+
+        if payload_max_length <= 0:
+            raise RuntimeError("reranker_max_length is too small")
+
+        tokenized = self.reranker_tokenizer(
+            pairs,
+            padding=False,
+            truncation="longest_first",
+            return_attention_mask=False,
+            max_length=payload_max_length,
+        )
+
+        for index, token_ids in enumerate(tokenized["input_ids"]):
+            tokenized["input_ids"][index] = (
+                self.reranker_prefix_tokens
+                + token_ids
+                + self.reranker_suffix_tokens
+            )
+
+        inputs = self.reranker_tokenizer.pad(
+            tokenized,
+            padding=True,
+            return_tensors="pt",
+        )
+
+        inputs = {
+            key: value.to(self.reranker_device)
+            for key, value in inputs.items()
+        }
+
+        with torch.inference_mode():
+            final_logits = self.reranker_model(
+                **inputs
+            ).logits[:, -1, :]
+
+            true_vector = final_logits[:, self.true_token_id]
+            false_vector = final_logits[:, self.false_token_id]
+
+            yes_no_logits = torch.stack(
+                [false_vector, true_vector],
+                dim=1,
+            )
+
+            probabilities = torch.softmax(
+                yes_no_logits,
+                dim=1,
+            )[:, 1]
+
+        return [
+            float(score)
+            for score in probabilities.detach().cpu().tolist()
+        ]
+
     def retrieve_callback(
         self,
         request: RetrieveKnowledge.Request,
@@ -104,60 +373,139 @@ class K9RagNode(Node):
             response.error = "Query is empty"
             return response
 
-        max_results = (
+        # Preserve the existing service interface. max_results now controls
+        # the candidate pool; this node intentionally returns only one result.
+        candidate_count = (
             int(request.max_results)
             if request.max_results > 0
-            else self.default_max_results
+            else self.candidate_count
         )
-        max_results = max(1, max_results)
+        candidate_count = max(1, candidate_count)
 
         try:
-            if self.collection.count() == 0:
-                response.success = True
-                response.error = ""
-                return response
-
-            query_embedding = self._embed_query(query)
-
-            results = self.collection.query(
-                query_embeddings=[query_embedding],
-                n_results=min(max_results, self.collection.count()),
-                include=["documents", "metadatas", "distances"],
+            candidates = self._retrieve_candidates(
+                query,
+                candidate_count,
             )
 
-            ids = (results.get("ids") or [[]])[0]
-            documents = (results.get("documents") or [[]])[0]
-            metadatas = (results.get("metadatas") or [[]])[0]
-            distances = (results.get("distances") or [[]])[0]
-
-            for doc_id, document, metadata, distance in zip(
-                ids, documents, metadatas, distances
-            ):
-                score = self._similarity_from_cosine_distance(distance)
-
-                if score < self.min_score:
-                    continue
-
-                metadata = metadata or {}
-
-                response.ids.append(str(doc_id))
-                response.documents.append(document or "")
-                response.sources.append(str(metadata.get("source", "")))
-                response.scores.append(float(score))
-                response.metadata_json.append(
-                    json.dumps(metadata, separators=(",", ":"), sort_keys=True)
+            if not candidates:
+                response.success = True
+                response.error = ""
+                self.get_logger().info(
+                    "RAG: no embedding candidates above threshold: "
+                    f"{query[:80]}"
                 )
+                return response
+
+            try:
+                reranker_scores = self._rerank(
+                    query,
+                    candidates,
+                )
+
+                for candidate, score in zip(
+                    candidates,
+                    reranker_scores,
+                ):
+                    candidate["reranker_score"] = score
+
+                best = max(
+                    candidates,
+                    key=lambda item: item["reranker_score"],
+                )
+
+                min_reranker_score = float(
+                    self.get_parameter(
+                        "min_reranker_score"
+                    ).value
+                )
+
+                if best["reranker_score"] < min_reranker_score:
+                    response.success = True
+                    response.error = ""
+                    self.get_logger().info(
+                        "RAG: best reranker score "
+                        f"{best['reranker_score']:.3f} below threshold "
+                        f"{min_reranker_score:.3f}: "
+                        f"{query[:80]}"
+                    )
+                    return response
+
+                final_score = float(best["reranker_score"])
+
+            except Exception as exc:
+                if not self.fallback_to_embedding:
+                    raise
+
+                self.get_logger().warning(
+                    "Reranker failed; using best embedding candidate: "
+                    f"{exc}"
+                )
+
+                best = max(
+                    candidates,
+                    key=lambda item: item["embedding_score"],
+                )
+                best["reranker_score"] = None
+                final_score = float(best["embedding_score"])
+
+            metadata = dict(best["metadata"])
+            metadata["embedding_score"] = round(
+                float(best["embedding_score"]),
+                6,
+            )
+            metadata["embedding_rank"] = int(
+                best["embedding_rank"]
+            )
+
+            if best.get("reranker_score") is not None:
+                metadata["reranker_score"] = round(
+                    float(best["reranker_score"]),
+                    6,
+                )
+
+            metadata["retrieval_pipeline"] = (
+                "qwen3-embedding:4b -> chroma top-N -> "
+                "Qwen3-Reranker-0.6B -> top-1"
+            )
+
+            response.ids.append(best["id"])
+            response.documents.append(best["document"])
+            response.sources.append(
+                str(metadata.get("source", ""))
+            )
+            response.scores.append(final_score)
+            response.metadata_json.append(
+                json.dumps(
+                    metadata,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                )
+            )
 
             response.success = True
             response.error = ""
 
+            rerank_text = (
+                f"{best['reranker_score']:.3f}"
+                if best.get("reranker_score") is not None
+                else "fallback"
+            )
+
             self.get_logger().info(
-                f"RAG query returned {len(response.documents)} result(s): "
+                "RAG: "
+                f"{len(candidates)} candidate(s), "
+                f"winner embedding_rank={best['embedding_rank']}, "
+                f"embedding={best['embedding_score']:.3f}, "
+                f"reranker={rerank_text}, "
+                f"source={metadata.get('source', '')}: "
                 f"{query[:80]}"
             )
 
         except Exception as exc:
-            self.get_logger().error(f"RAG retrieval failed: {exc}")
+            self.get_logger().error(
+                f"RAG retrieval failed: {exc}"
+            )
             response.success = False
             response.error = str(exc)
 
