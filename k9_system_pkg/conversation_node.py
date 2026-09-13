@@ -439,9 +439,10 @@ class K9ConversationNode(Node):
                     f"{rag_context}\n\n"
                     "This is one remembered event selected because it "
                     "may help answer the user's current question. "
-                    "Use it when relevant. Treat it as one coherent "
-                    "memory. Do not combine it with other events and "
-                    "do not invent additional factual details."
+                    "Use it only when relevant. Preserve the facts but paraphrase naturally. "
+                    "Answer in at most one short sentence. "
+                    "Do not merge this memory with other events, do not embellish, "
+                    "and do not add unsupported details."                  
                 )
 
                 if rag_source:
