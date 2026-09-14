@@ -227,9 +227,13 @@ def launch_nodes(context):
                 )
             ]
 
-            node_args['additional_env'] = (
-                k9_venv_environment()
+            rag_env = k9_venv_environment()
+
+            rag_env['PYTHONWARNINGS'] = (
+                'ignore::UserWarning:torch.cuda'
             )
+
+            node_args['additional_env'] = rag_env
 
         elif name == 'eye_camera':
 
