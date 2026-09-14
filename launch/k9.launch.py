@@ -87,7 +87,11 @@ def launch_nodes(context):
     """Create the set of K9 nodes appropriate for the selected computer."""
 
     platform = LaunchConfiguration('platform').perform(context)
-    log_level = LaunchConfiguration('log_level')
+    log_level = (
+        LaunchConfiguration('log_level')
+        .perform(context)
+        .upper()
+    )
 
     enable_chess = LaunchConfiguration('enable_chess').perform(context).lower() in ('1', 'true', 'yes', 'on')
     # ------------------------------------------------------------------
@@ -187,6 +191,7 @@ def launch_nodes(context):
             'output': 'both',
             'emulate_tty': True,
             'arguments': [
+                '--ros-args',
                 '--log-level',
                 log_level,
             ],
@@ -303,6 +308,7 @@ def launch_nodes(context):
                     chess_config,
                 ],
                 arguments=[
+                    '--ros-args',   
                     '--log-level',
                     log_level,
                 ],
@@ -327,6 +333,7 @@ def launch_nodes(context):
                     chess_config,
                 ],
                 arguments=[
+                    '--ros-args',
                     '--log-level',
                     log_level,
                 ],
@@ -364,6 +371,7 @@ def launch_nodes(context):
                     phantom_config,
                 ],
                 arguments=[
+                    '--ros-args',   
                     '--log-level',
                     log_level,
                 ],
@@ -381,6 +389,7 @@ def launch_nodes(context):
                 output='both',
                 emulate_tty=True,
                 arguments=[
+                    '--ros-args',
                     '--log-level',
                     log_level,
                 ],
