@@ -158,7 +158,10 @@ def launch_nodes(context):
                 IncludeLaunchDescription(
                     PythonLaunchDescriptionSource(
                         stt_launch
-                    )
+                    ),
+                    launch_arguments={
+                        'log_level': log_level,
+                    }.items(),
                 )
             )
 
