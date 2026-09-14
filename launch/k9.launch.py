@@ -187,7 +187,6 @@ def launch_nodes(context):
             'output': 'both',
             'emulate_tty': True,
             'arguments': [
-                '--ros-args',
                 '--log-level',
                 log_level,
             ],
@@ -304,7 +303,6 @@ def launch_nodes(context):
                     chess_config,
                 ],
                 arguments=[
-                    '--ros-args',
                     '--log-level',
                     log_level,
                 ],
@@ -329,7 +327,6 @@ def launch_nodes(context):
                     chess_config,
                 ],
                 arguments=[
-                    '--ros-args',
                     '--log-level',
                     log_level,
                 ],
@@ -367,7 +364,6 @@ def launch_nodes(context):
                     phantom_config,
                 ],
                 arguments=[
-                    '--ros-args',
                     '--log-level',
                     log_level,
                 ],
@@ -385,7 +381,6 @@ def launch_nodes(context):
                 output='both',
                 emulate_tty=True,
                 arguments=[
-                    '--ros-args',
                     '--log-level',
                     log_level,
                 ],
