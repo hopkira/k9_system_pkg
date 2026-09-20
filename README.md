@@ -580,3 +580,25 @@ ros2 launch k9_system_pkg k9.launch.py platform:=jetson
 
 Before switching from commissioning launches, stop the standalone description,
 LD06 driver and filter. Do not launch two owners of the serial device or TF.
+
+
+### OAK camera in standard bring-up
+
+`k9.launch.py platform:=pi` (or `all`) also includes the installed
+`k9_ros2_nav/oak/oak.launch.py` and `oak_floor_filter.launch.py`. Jetson starts
+neither; it consumes the Pi topics over domain 9. Sensor configuration stays in
+`k9_ros2_nav`, and the driver publishes camera-internal TF under `oakd_link`.
+
+- `enable_oak:=false` skips both the camera and floor filter.
+- `enable_oak_floor_filter:=false` keeps the camera and `/oak/points` but skips
+  `/oak/obstacles` floor processing. This flag has no effect when OAK is disabled.
+
+Stop standalone OAK and floor-filter processes before starting the full Pi
+launch. Do not run two owners of the USB camera. Source ROS Jazzy and the K9
+workspace and use the existing domain 9/CycloneDDS networking environment.
+
+Current camera configuration produces a 320x200 cloud, with speckle filtering
+on and explicit spatial, temporal and decimation filters off. Floor removal
+uses the temporary-mount tuning in `floor_filter.yaml`; the physical camera
+mount/TF still needs final calibration before robot-relative navigation.
+These launch additions do not connect perception to motor commands or Nav2.
