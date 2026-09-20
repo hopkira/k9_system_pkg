@@ -132,6 +132,19 @@ def launch_nodes(context):
 
     nodes = []
 
+    # Navigation owns the sensor configuration; system bring-up owns startup.
+    if platform in ('pi', 'all') and LaunchConfiguration(
+            'enable_ld06').perform(context).lower() in ('true', '1', 'yes', 'on'):
+        nodes.append(IncludeLaunchDescription(PythonLaunchDescriptionSource(
+            os.path.join(get_package_share_directory('k9_ros2_nav'),
+                         'launch', 'ld06.launch.py'))))
+
+    # The Pi owns shared robot geometry; Jetson consumes TF over ROS.
+    if platform in ('pi', 'all') and LaunchConfiguration(
+            'enable_robot_description').perform(context).lower() in ('true', '1', 'yes', 'on'):
+        nodes.append(IncludeLaunchDescription(PythonLaunchDescriptionSource(
+            os.path.join(k9_system_share, 'launch', 'robot_description.launch.py'))))
+
     # ------------------------------------------------------------------
     # Construct each requested node.
     # ------------------------------------------------------------------
@@ -410,6 +423,12 @@ def generate_launch_description():
     """Build the top-level K9 launch description."""
 
     return LaunchDescription([
+        DeclareLaunchArgument(
+            'enable_ld06', default_value='true',
+            description='Launch LD06 and 20 cm filter on Pi/all; disable if already running'),
+        DeclareLaunchArgument(
+            'enable_robot_description', default_value='true',
+            description='Publish shared hardware TF on Pi/all; disable if already running'),
         DeclareLaunchArgument(
             'platform',
             default_value='pi',
