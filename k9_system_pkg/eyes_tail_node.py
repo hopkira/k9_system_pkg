@@ -8,6 +8,7 @@ from typing import Deque, Optional
 
 import rclpy
 from rclpy.node import Node
+from geometry_msgs.msg import TwistStamped
 from std_msgs.msg import Bool, Float32, String
 from std_srvs.srv import Trigger
 
@@ -60,6 +61,8 @@ class EyesTail:
     """
 
     EYES_CHANNEL = 0
+    DISPLAY_CHANNEL = 1
+    HOVER_CHANNEL = 2
     TAIL_VERTICAL_CHANNEL = 4
     TAIL_HORIZONTAL_CHANNEL = 5
 
@@ -68,6 +71,8 @@ class EyesTail:
         self.available = False
         self._level = 0.0
         self._last_eye_duty: Optional[int] = None
+        self._last_hover_duty: Optional[int] = None
+        self._display_on = False
 
         try:
             import board
@@ -130,7 +135,10 @@ class EyesTail:
                 time.sleep(retry_delay_sec)
 
         self.set_eye_level(0.0)
+        self.set_display(False)
+        self.set_hover_level(0.0)
         self.disable_tail_outputs()
+
 
     def set_eye_level(self, level: float) -> None:
         """Set eye LED brightness immediately, without smoothing."""
@@ -151,6 +159,33 @@ class EyesTail:
 
     def get_eye_level(self) -> float:
         return self._level
+
+    def set_display(self, enabled: bool) -> None:
+        """Switch the display MOSFET fully on or off."""
+        self._display_on = bool(enabled)
+
+        if not self.available:
+            return
+
+        self.pca.channels[self.DISPLAY_CHANNEL].duty_cycle = (
+            0xFFFF if self._display_on else 0
+        )
+
+    def set_hover_level(self, level: float) -> None:
+        """Set hover-light brightness from 0.0 to 1.0."""
+        level = min(max(float(level), 0.0), 1.0)
+
+        if not self.available:
+            return
+
+        duty = int(round(level * 65535.0))
+
+        # Avoid unnecessary I2C writes.
+        if duty == self._last_hover_duty:
+            return
+
+        self.pca.channels[self.HOVER_CHANNEL].duty_cycle = duty
+        self._last_hover_duty = duty
 
     def set_tail_outputs(self, channel_4: int, channel_5: int) -> None:
         if not self.available:
@@ -183,6 +218,12 @@ class EyesTailServiceNode(Node):
         self.declare_parameter("waiting_for_hotword_level", 0.001)
         self.declare_parameter("listening_level", 0.01)
         self.declare_parameter("processing_level", 0.50)
+
+        # Drive/hover-light parameters.
+        self.declare_parameter("cmd_vel_topic", "/cmd_vel")
+        self.declare_parameter("max_linear_velocity", 1.398918)
+        self.declare_parameter("max_angular_velocity", 1.3836973294)
+        self.declare_parameter("cmd_vel_timeout_sec", 0.5)
 
         # RMS mapping parameters. Assumes /voice/rms_level is normalised 0..1.
         self.declare_parameter("talking_min_level", 0.08)
@@ -249,6 +290,10 @@ class EyesTailServiceNode(Node):
         self._latest_rms_time = 0.0
         self._current_eye_level = 0.0
 
+        self._linear_velocity = 0.0
+        self._angular_velocity = 0.0
+        self._latest_cmd_vel_time = 0.0
+
         # Optional short-lived manual override for backwards-compatible
         # eyes_set_level / eyes_on / eyes_off service calls.
         self._manual_eye_level: Optional[float] = None
@@ -291,6 +336,13 @@ class EyesTailServiceNode(Node):
             10,
         )
 
+        self.create_subscription(
+            TwistStamped,
+            str(self.get_parameter("cmd_vel_topic").value),
+            self.cmd_vel_cb,
+            10,
+        )
+
         # Existing eye services, retained for diagnostics/backwards compatibility.
         self.create_service(
             SetBrightness,
@@ -302,6 +354,19 @@ class EyesTailServiceNode(Node):
             "eyes_get_level",
             self.get_level_cb,
         )
+
+        # Display services, which control the MOSFET that powers the entire display.
+        self.create_service(
+            Trigger,
+            "display_on",
+            self.display_on_cb,
+        )
+        self.create_service(
+            Trigger,
+            "display_off",
+            self.display_off_cb,
+        )
+
         self.create_service(Trigger, "eyes_on", self.on_cb)
         self.create_service(Trigger, "eyes_off", self.off_cb)
 
@@ -321,7 +386,7 @@ class EyesTailServiceNode(Node):
         )
 
         self.get_logger().info(
-            "Eyes and tail node ready: automatic eye control at 40 Hz; "
+            "Eyes/tail/display/hover node ready at 40 Hz"
             f"activity={self._activity_topic}, "
             f"rms={self._rms_topic}, "
             f"is_talking={self._is_talking_topic}, "
@@ -363,6 +428,25 @@ class EyesTailServiceNode(Node):
                 f"Interaction activity changed "
                 f"to {resolved}"
             )
+
+    def display_on_cb(self, request, response):
+        del request
+        self.eyestail.set_display(True)
+        response.success = True
+        response.message = "Display on"
+        return response
+
+    def display_off_cb(self, request, response):
+        del request
+        self.eyestail.set_display(False)
+        response.success = True
+        response.message = "Display off"
+        return response
+
+    def cmd_vel_cb(self, msg: TwistStamped) -> None:
+        self._linear_velocity = float(msg.twist.linear.x)
+        self._angular_velocity = float(msg.twist.angular.z)
+        self._latest_cmd_vel_time = time.monotonic()
 
     def rms_cb(self, msg: Float32) -> None:
         self._latest_rms = max(0.0, float(msg.data))
@@ -411,6 +495,11 @@ class EyesTailServiceNode(Node):
             self._current_eye_level = 0.0
             self.eyestail.set_eye_level(0.0)
 
+            self._linear_velocity = 0.0
+            self._angular_velocity = 0.0
+            self._latest_cmd_vel_time = 0.0
+            self.eyestail.set_hover_level(0.0)
+
             if not was_active:
                 self.get_logger().warning(
                     "Emergency active: eyes off and tail motion cancelled"
@@ -429,6 +518,37 @@ class EyesTailServiceNode(Node):
 
         target = self.calculate_eye_target()
         self.update_eye_envelope(target)
+
+        hover_target = self.calculate_hover_target()
+        self.eyestail.set_hover_level(hover_target)
+
+    def calculate_hover_target(self) -> float:
+        """Map commanded translation/rotation to hover-light brightness."""
+
+        if self._emergency_active:
+            return 0.0
+        
+        # Fail safe to off if velocity commands stop arriving.
+        if (
+            self._latest_cmd_vel_time == 0.0
+            or time.monotonic() - self._latest_cmd_vel_time
+            > float(self.get_parameter("cmd_vel_timeout_sec").value)
+        ):
+            return 0.0
+
+        max_linear = max(
+            float(self.get_parameter("max_linear_velocity").value),
+            1.0e-6,
+        )
+        max_angular = max(
+            float(self.get_parameter("max_angular_velocity").value),
+            1.0e-6,
+        )
+
+        linear_level = abs(self._linear_velocity) / max_linear
+        angular_level = abs(self._angular_velocity) / max_angular
+
+        return min(max(linear_level, angular_level), 1.0)
 
     def calculate_eye_target(self) -> float:
         now = time.monotonic()
@@ -636,6 +756,7 @@ class EyesTailServiceNode(Node):
         response.message = "Eyes temporarily set off"
         return response
 
+
     # ------------------------------------------------------------------
     # Tail services
     # ------------------------------------------------------------------
@@ -797,7 +918,8 @@ def main(args=None):
     finally:
         node.cancel_tail_motion()
         node.eyestail.set_eye_level(0.0)
-        node.destroy_node()
+        node.eyestail.set_hover_level(0.0)
+        node.eyestail.set_display(False)
         if rclpy.ok():
             rclpy.shutdown()
 
