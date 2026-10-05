@@ -25,6 +25,14 @@
   <exec_depend>ament_index_python</exec_depend>
   <exec_depend>k9_perception_pkg</exec_depend>
 
+  <exec_depend>k9_description</exec_depend>
+
+  <exec_depend>robot_state_publisher</exec_depend>
+
+  <exec_depend>xacro</exec_depend>
+
+  <exec_depend>k9_ros2_nav</exec_depend>
+
   <!-- Test dependencies -->
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

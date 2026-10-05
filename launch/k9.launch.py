@@ -5,6 +5,7 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
+    GroupAction,
     IncludeLaunchDescription,
     OpaqueFunction,
 )
@@ -131,6 +132,31 @@ def launch_nodes(context):
     )
 
     nodes = []
+
+    # Navigation owns the sensor configuration; system bring-up owns startup.
+    if platform in ('pi', 'all') and LaunchConfiguration(
+            'enable_ld06').perform(context).lower() in ('true', '1', 'yes', 'on'):
+        nodes.append(IncludeLaunchDescription(PythonLaunchDescriptionSource(
+            os.path.join(get_package_share_directory('k9_ros2_nav'),
+                         'launch', 'ld06.launch.py'))))
+
+    # OAK hardware and processing stay on the Pi; isolate driver launch arguments.
+    if platform in ('pi', 'all') and LaunchConfiguration(
+            'enable_oak').perform(context).lower() in ('true', '1', 'yes', 'on'):
+        oak_share = os.path.join(get_package_share_directory('k9_ros2_nav'), 'oak')
+        oak_actions = [IncludeLaunchDescription(PythonLaunchDescriptionSource(
+            os.path.join(oak_share, 'oak.launch.py')))]
+        if LaunchConfiguration('enable_oak_floor_filter').perform(context).lower() in (
+                'true', '1', 'yes', 'on'):
+            oak_actions.append(IncludeLaunchDescription(PythonLaunchDescriptionSource(
+                os.path.join(oak_share, 'oak_floor_filter.launch.py'))))
+        nodes.append(GroupAction(actions=oak_actions, scoped=True))
+
+    # The Pi owns shared robot geometry; Jetson consumes TF over ROS.
+    if platform in ('pi', 'all') and LaunchConfiguration(
+            'enable_robot_description').perform(context).lower() in ('true', '1', 'yes', 'on'):
+        nodes.append(IncludeLaunchDescription(PythonLaunchDescriptionSource(
+            os.path.join(k9_system_share, 'launch', 'robot_description.launch.py'))))
 
     # ------------------------------------------------------------------
     # Construct each requested node.
@@ -410,6 +436,18 @@ def generate_launch_description():
     """Build the top-level K9 launch description."""
 
     return LaunchDescription([
+        DeclareLaunchArgument(
+            'enable_oak', default_value='true',
+            description='Launch OAK camera and processing on Pi/all; false skips both'),
+        DeclareLaunchArgument(
+            'enable_oak_floor_filter', default_value='true',
+            description='Run floor filter with OAK on Pi/all; false keeps only raw cloud'),
+        DeclareLaunchArgument(
+            'enable_ld06', default_value='true',
+            description='Launch LD06 and 20 cm filter on Pi/all; disable if already running'),
+        DeclareLaunchArgument(
+            'enable_robot_description', default_value='true',
+            description='Publish shared hardware TF on Pi/all; disable if already running'),
         DeclareLaunchArgument(
             'platform',
             default_value='pi',
