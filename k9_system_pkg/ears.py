@@ -205,6 +205,27 @@ class Ears:
             self.ser = None
 
         self.following = False
+        # Drain incoming USB data so controller output cannot back up.
+        self._serial_read_timer = self.node.create_timer(
+            0.02, self._read_serial
+        )
+
+    def _read_serial(self) -> None:
+        if self.ser is None or not self.ser.is_open:
+            return
+
+        try:
+            waiting = self.ser.in_waiting
+            if waiting:
+                data = self.ser.read(min(waiting, 4096))
+                self.node.get_logger().debug(
+                    "Ears RX: " + repr(data)
+                )
+        except (serial.SerialException, OSError) as exc:
+            self.node.get_logger().error(
+                f"Ears serial read failed: {exc}"
+            )
+            self._serial_read_timer.cancel()
 
     def __write(
         self,

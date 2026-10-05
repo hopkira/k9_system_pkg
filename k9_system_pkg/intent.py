@@ -37,6 +37,8 @@ class K9IntentNode(Node):
         "ENROL_FACE_ANSWER",
         "ENROL_FACE_CANCEL",
         "CHESS_SETUP_ANSWER",
+        "CHESS_RESIGN",
+        "CHESS_DRAW_OFFER",
     }
 
     def __init__(self) -> None:
@@ -91,6 +93,26 @@ class K9IntentNode(Node):
                     r"\bhush(?: now)?\b",
                     r"\btime to sleep\b",
                     r"\bgo to sleep\b",
+                ],
+            ),
+            (
+                "CHESS_RESIGN",
+                [
+                    r"^(?:i\s+)?resign(?:\s+(?:the\s+)?(?:game|chess game))?$",
+                    r"^(?:i\s+)?concede(?:\s+(?:the\s+)?(?:game|chess game))?$",
+                    r"^i give up(?:\s+(?:the\s+)?(?:game|chess game))?$",
+                    r"^i surrender(?:\s+(?:the\s+)?(?:game|chess game))?$",
+                ],
+            ),
+            (
+                "CHESS_DRAW_OFFER",
+                [
+                    r"^(?:i\s+)?offer (?:you )?a draw$",
+                    r"^(?:do|would|will) you accept (?:a|my) draw(?: offer)?$",
+                    r"^would you like a draw$",
+                    r"^(?:how|what) about a draw$",
+                    r"^(?:shall|should) we (?:call it|agree to) a draw$",
+                    r"^let'?s (?:call it|agree to) a draw$",
                 ],
             ),
             (
@@ -251,14 +273,18 @@ class K9IntentNode(Node):
         context = context or {}
         normal = self._normalise(text)
 
-        # STOP_LISTENING is a global executive command and must never be
-        # consumed as an answer to a contextual workflow such as chess setup
-        # or face enrolment.
+        # These commands are global executive commands and must never be
+        # consumed as answers to contextual workflows such as chess setup or
+        # face enrolment.
         command = self._classify_command(normal)
 
         if (
             command is not None
-            and command.intent == "STOP_LISTENING"
+            and command.intent in {
+                "STOP_LISTENING",
+                "CHESS_RESIGN",
+                "CHESS_DRAW_OFFER",
+            }
         ):
             return command
 
@@ -430,6 +456,8 @@ class K9IntentNode(Node):
             "reverse": "TURN_ABOUT",
             "quiet": "STOP_LISTENING",
             "silence": "STOP_LISTENING",
+            "resign": "CHESS_RESIGN",
+            "concede": "CHESS_RESIGN",
         }
 
         canonical = self._strip_polite_wrapper(normal)

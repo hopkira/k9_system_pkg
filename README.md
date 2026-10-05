@@ -530,3 +530,75 @@ This node aggregates information received from other nodes and publishes a conte
 ## Ollama Wrap
 This node wraps generative LLMs so that a message in English can be turned into a phrase that K9 might say.
 
+
+## Shared hardware robot description
+
+`k9_system_pkg` owns the real robot's single `robot_state_publisher`. Geometry
+comes from the installed `k9_description` package in `k9-gazebo`, using the
+current `model/k9.urdf.xacro` with `sim:=false`. No geometry is duplicated here.
+
+```bash
+ros2 launch k9_system_pkg robot_description.launch.py
+```
+
+This standalone launch starts only the description publisher: no drive, ear
+commands, simulator, GUI or synthetic joint-state publisher. It uses wall time.
+Fixed sensor mounts publish immediately; moving-joint transforms require real
+`/joint_states`. Wheel odometry/EKF must separately provide `odom -> base_link`.
+
+The normal `k9.launch.py` includes it for `platform:=pi` and `platform:=all`,
+but not `platform:=jetson`. Stop the standalone instance before launching the
+full Pi system, or pass `enable_robot_description:=false` to avoid duplicates.
+Do not run the Gazebo/display description publisher alongside the real one.
+
+Build the shared description and system packages in the Pi workspace:
+
+```bash
+colcon build --packages-select k9_description k9_system_pkg
+source install/local_setup.bash
+```
+
+The description source needs the sibling
+`k9_robot/src/description/k9.urdf.xacro` from the same Gazebo checkout. The
+confirmed LD06 mounting is `base_link -> base_laser`: (-0.112, 0, 0.53) metres,
+zero rotation; nominal `base_footprint -> base_laser` height is 0.5994 m.
+Camera height and ear joint calibration discrepancies documented in the
+navigation repository remain outstanding; fixed lidar TF does not validate them.
+
+The same standard launch includes `k9_ros2_nav/ld06.launch.py` on Pi/all,
+starting the LD06 driver and its 20 cm self-return filter. It does not start them
+on Jetson. `enable_ld06:=false` skips both if they are already running.
+
+Normal distributed startup (in terminals with the same ROS domain/network setup):
+
+```bash
+# Pi
+ros2 launch k9_system_pkg k9.launch.py platform:=pi
+# Jetson
+ros2 launch k9_system_pkg k9.launch.py platform:=jetson
+```
+
+Before switching from commissioning launches, stop the standalone description,
+LD06 driver and filter. Do not launch two owners of the serial device or TF.
+
+
+### OAK camera in standard bring-up
+
+`k9.launch.py platform:=pi` (or `all`) also includes the installed
+`k9_ros2_nav/oak/oak.launch.py` and `oak_floor_filter.launch.py`. Jetson starts
+neither; it consumes the Pi topics over domain 9. Sensor configuration stays in
+`k9_ros2_nav`, and the driver publishes camera-internal TF under `oakd_link`.
+
+- `enable_oak:=false` skips both the camera and floor filter.
+- `enable_oak_floor_filter:=false` keeps the camera and `/oak/points` but skips
+  `/oak/obstacles` floor processing. This flag has no effect when OAK is disabled.
+
+Stop standalone OAK and floor-filter processes before starting the full Pi
+launch. Do not run two owners of the USB camera. Source ROS Jazzy and the K9
+workspace and use the existing domain 9/CycloneDDS networking environment.
+
+Current camera configuration produces a 320x200 cloud, with speckle filtering
+on and explicit spatial, temporal and decimation filters off. Floor removal
+uses the temporary-mount tuning in `floor_filter.yaml`; the physical camera
+mount/TF still needs final calibration before robot-relative navigation.
+These launch additions do not connect perception to motor commands or Nav2.
