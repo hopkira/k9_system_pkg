@@ -156,16 +156,24 @@ def launch_nodes(context):
         )
 
     if platform in ('jetson', 'all'):
+
         imu_launch = os.path.join(
             get_package_share_directory('k9_imu_pkg'),
             'launch',
             'imu.launch.py',
+        )    
+        
+        localization_launch = os.path.join(
+            get_package_share_directory('k9_nav_pkg'),
+            'launch',
+            'localization.launch.py',
         )
 
         nodes.append(
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(
                     imu_launch
+                    localization_launch
                 )
             )
         )
