@@ -141,6 +141,20 @@ def launch_nodes(context):
             'drive.launch.py',
         )
 
+        nodes.append(
+            IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(
+                    drive_launch
+                ),
+                launch_arguments={
+                    'dry_run': 'false',
+                    'start_inhibited': 'true',
+                    'device': '/dev/roboclaw',
+                    'publish_robot_description': 'false',
+                }.items(),
+            )
+        )
+
     if platform in ('jetson', 'all'):
         imu_launch = os.path.join(
             get_package_share_directory('k9_imu_pkg'),
