@@ -134,7 +134,6 @@ def launch_nodes(context):
 
     nodes = []
 
-<<<<<<< HEAD
     if platform in ('pi', 'all'):
         drive_launch = os.path.join(
             get_package_share_directory('k9_drive_pkg'),
@@ -171,8 +170,6 @@ def launch_nodes(context):
         )
     )
 
-=======
->>>>>>> refs/remotes/origin/main
     # Navigation owns the sensor configuration; system bring-up owns startup.
     if platform in ('pi', 'all') and LaunchConfiguration(
             'enable_ld06').perform(context).lower() in ('true', '1', 'yes', 'on'):
