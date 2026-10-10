@@ -170,20 +170,6 @@ def launch_nodes(context):
             )
         )
 
-    nodes.append(
-        IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(
-                drive_launch
-            ),
-            launch_arguments={
-                'dry_run': 'false',
-                'start_inhibited': 'true',
-                'device': '/dev/roboclaw',
-                'publish_robot_description': 'false',
-            }.items(),
-        )
-    )
-
     # Navigation owns the sensor configuration; system bring-up owns startup.
     if platform in ('pi', 'all') and LaunchConfiguration(
             'enable_ld06').perform(context).lower() in ('true', '1', 'yes', 'on'):
