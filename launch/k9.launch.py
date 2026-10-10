@@ -162,6 +162,14 @@ def launch_nodes(context):
             'launch',
             'imu.launch.py',
         )    
+
+        nodes.append(
+            IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(
+                    imu_launch
+                )
+            )
+        )
         
         localization_launch = os.path.join(
             get_package_share_directory('k9_nav_pkg'),
@@ -172,7 +180,6 @@ def launch_nodes(context):
         nodes.append(
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(
-                    imu_launch
                     localization_launch
                 )
             )
