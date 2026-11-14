@@ -1,5 +1,4 @@
 import os
-from sys import platform
 
 from ament_index_python.packages import get_package_share_directory
 
@@ -96,6 +95,10 @@ def launch_nodes(context):
     )
 
     enable_chess = LaunchConfiguration('enable_chess').perform(context).lower() in ('1', 'true', 'yes', 'on')
+    requested_dry_run = LaunchConfiguration('drive_dry_run').perform(context).lower()
+    if requested_dry_run not in ('auto', 'true', 'false'):
+        raise RuntimeError('drive_dry_run must be auto, true or false')
+    drive_dry_run = ('true' if platform == 'commissioning' else 'false') if requested_dry_run == 'auto' else requested_dry_run
     # ------------------------------------------------------------------
     # Select the nodes belonging to this K9 computer.
     # ------------------------------------------------------------------
@@ -108,6 +111,10 @@ def launch_nodes(context):
         node_names = JETSON_NODES
         run_bt = True
 
+    elif platform == 'commissioning':
+        node_names = []
+        run_bt = False
+
     elif platform == 'all':
         node_names = JETSON_NODES + PI_NODES
         run_bt = True
@@ -115,7 +122,7 @@ def launch_nodes(context):
     else:
         raise RuntimeError(
             f"Unknown platform '{platform}'. "
-            "Expected: pi, jetson or all."
+            "Expected: pi, jetson, commissioning or all."
         )
 
     # ------------------------------------------------------------------
@@ -134,7 +141,11 @@ def launch_nodes(context):
 
     nodes = []
 
-    if platform in ('pi', 'all'):
+    if platform == 'commissioning' and LaunchConfiguration(
+            'enable_robot_description').perform(context).lower() not in ('true', '1', 'yes', 'on'):
+        raise RuntimeError('Commissioning requires enable_robot_description:=true')
+
+    if platform in ('pi', 'all', 'commissioning'):
         drive_launch = os.path.join(
             get_package_share_directory('k9_drive_pkg'),
             'launch',
@@ -147,9 +158,10 @@ def launch_nodes(context):
                     drive_launch
                 ),
                 launch_arguments={
-                    'dry_run': 'false',
+                    'mode': ('commissioning' if platform == 'commissioning' else 'normal'),
+                    'dry_run': drive_dry_run,
                     'start_inhibited': 'true',
-                    'device': '/dev/roboclaw',
+                    'device': LaunchConfiguration('drive_device'),
                     'publish_robot_description': 'false',
                 }.items(),
             )
@@ -205,10 +217,15 @@ def launch_nodes(context):
         nodes.append(GroupAction(actions=oak_actions, scoped=True))
 
     # The Pi owns shared robot geometry; Jetson consumes TF over ROS.
-    if platform in ('pi', 'all') and LaunchConfiguration(
+    if platform in ('pi', 'all', 'commissioning') and LaunchConfiguration(
             'enable_robot_description').perform(context).lower() in ('true', '1', 'yes', 'on'):
         nodes.append(IncludeLaunchDescription(PythonLaunchDescriptionSource(
-            os.path.join(k9_system_share, 'launch', 'robot_description.launch.py'))))
+            os.path.join(k9_system_share, 'launch', 'robot_description.launch.py')),
+            launch_arguments={
+                'drive_dry_run': drive_dry_run,
+                'drive_start_inhibited': 'true',
+                'drive_device': LaunchConfiguration('drive_device'),
+            }.items()))
 
     # ------------------------------------------------------------------
     # Construct each requested node.
@@ -499,13 +516,19 @@ def generate_launch_description():
             description='Launch LD06 and 20 cm filter on Pi/all; disable if already running'),
         DeclareLaunchArgument(
             'enable_robot_description', default_value='true',
-            description='Publish shared hardware TF on Pi/all; disable if already running'),
+            description='Publish shared robot description on Pi/all/commissioning'),
         DeclareLaunchArgument(
             'platform',
             default_value='pi',
-            description='K9 computer role: pi, jetson or all',
+            description='K9 computer role: pi, jetson, commissioning or all',
         ),
 
+        DeclareLaunchArgument(
+            'drive_dry_run', default_value='auto',
+            description='auto: dry-run for commissioning, physical hardware for normal Pi; or true/false'),
+        DeclareLaunchArgument(
+            'drive_device', default_value='/dev/roboclaw',
+            description='RoboClaw device path'),
         DeclareLaunchArgument(
             'log_level',
             default_value='info',
