@@ -107,6 +107,11 @@ class Ears:
         self.joint_publisher = node.create_publisher(JointState, "/joint_states", 10)
         self._rx_buffer = bytearray()
         self._last_scan_ns = {}
+        # Latest real potentiometer measurements, not guessed servo commands.
+        self._last_positions = {}
+        self._last_position_ns = {}
+        self._position_timeout_ns = 500_000_000
+        self._joint_timer = node.create_timer(0.1, self._publish_cached_positions)
         self.following = False
         self.ser = None
         try:
@@ -165,21 +170,37 @@ class Ears:
             self._rx_buffer.clear()
             self.node.get_logger().warning("Cleared oversized ears serial receive buffer")
 
+    def _publish_cached_positions(self):
+        """Continue ear TF updates only while genuine position feedback is fresh."""
+        now = self.node.get_clock().now()
+        names, positions = [], []
+        for ear in ("l_ear", "r_ear"):
+            seen = self._last_position_ns.get(ear)
+            if seen is not None and 0 <= now.nanoseconds - seen <= self._position_timeout_ns:
+                names.append(self.joints[ear])
+                positions.append(self._last_positions[ear])
+        if not names:
+            return
+        joint = JointState()
+        joint.header.stamp = now.to_msg()
+        joint.name = names
+        joint.position = positions
+        self.joint_publisher.publish(joint)
+
     def _publish_reading(self, line):
         text = line.decode("utf-8", errors="replace").strip()
         start = text.find("{")
         if start < 0:
-            return  # Console prompts, echoes and startup text.
+            return
         try:
             reading = json.loads(text[start:])
-            if not isinstance(reading, dict) or reading.get("type") != "LIDAR":
+            if not isinstance(reading, dict) or reading.get("type") not in ("LIDAR", "POSITION"):
                 return
             ear = reading.get("sensor")
             if ear not in self.frames:
                 return
-            distance = float(reading["distance"])
             angle = float(reading["angle"])
-            if not math.isfinite(distance) or not math.isfinite(angle) or distance <= 0:
+            if not math.isfinite(angle):
                 return
         except (ValueError, TypeError, KeyError):
             self.node.get_logger().debug(f"Ignored invalid ears serial line: {text!r}")
@@ -189,22 +210,33 @@ class Ears:
         position = scale * angle + offset
         if not math.isfinite(position):
             return
+
         now = self.node.get_clock().now()
         stamp = now.to_msg()
-        # Publish only this ear: do not stamp the other ear's old position as new.
+        self._last_positions[ear] = position
+        self._last_position_ns[ear] = now.nanoseconds
+
+        # Immediately update TF for this actual reading (especially while sweeping).
         joint = JointState()
         joint.header.stamp = stamp
         joint.name = [self.joints[ear]]
         joint.position = [position]
         self.joint_publisher.publish(joint)
 
-        # Invalid/out-of-spec ranges are omitted rather than invented as clear space.
-        if not self.range_min <= distance <= self.range_max:
+        if reading["type"] != "LIDAR":
             return
+
+        try:
+            distance = float(reading["distance"])
+        except (ValueError, TypeError, KeyError):
+            return
+        if not math.isfinite(distance) or not self.range_min <= distance <= self.range_max:
+            return
+
         scan = LaserScan()
         scan.header.stamp = stamp  # Host receipt time; firmware has no timestamp.
         scan.header.frame_id = self.frames[ear]
-        # The sensor frame rotates via JointState/TF; ray is along its local +X.
+        # One ToF measurement along the ear sensor frame's local +X direction.
         scan.angle_min = 0.0
         scan.angle_max = 0.0
         scan.angle_increment = 0.0
@@ -219,6 +251,7 @@ class Ears:
         self.scan_publishers[ear].publish(scan)
 
     def close(self):
+        self._joint_timer.cancel()
         self._serial_read_timer.cancel()
         if self.ser is not None and self.ser.is_open:
             try:
