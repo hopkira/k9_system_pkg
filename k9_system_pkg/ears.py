@@ -1,18 +1,22 @@
 #!/usr/bin/env python3
 """K9 ears: shared services, Gazebo movement, and real serial sensor data.
 
-Real backend publishes /l_ear/scan, /r_ear/scan and ear-only /joint_states.
+Real backend polls Espruino for fresh pairs of readings with bounded backlog.
+Publishes /l_ear/scan, /r_ear/scan, /l_ear/points, /r_ear/points
+and ear-only /joint_states.
 Do not run alongside another publisher owning the real ear joint positions.
 """
 
 import json
 import math
+import struct
+import time
 
 import rclpy
 import serial
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
-from sensor_msgs.msg import JointState, LaserScan
+from sensor_msgs.msg import JointState, LaserScan, PointCloud2, PointField
 from std_msgs.msg import Float64MultiArray, String
 from std_srvs.srv import Trigger
 
@@ -68,7 +72,7 @@ class SimEars:
 
 
 class Ears:
-    """Espruino USB commands and newline-delimited LIDAR JSON."""
+    """Espruino on-demand paired measurements and ROS sensor publications."""
 
     def __init__(self, node):
         self.node = node
@@ -83,6 +87,8 @@ class Ears:
             "left_angle_offset": 0.0,
             "right_angle_scale": 1.0,
             "right_angle_offset": 0.0,
+            "poll_period": 0.25,  # 4 complete left/right cycles per second
+            "poll_timeout": 0.5,  # Allow a slow request to expire without a backlog
         }
         for name, value in defaults.items():
             node.declare_parameter(name, value)
@@ -104,6 +110,10 @@ class Ears:
             ear: node.create_publisher(LaserScan, f"/{ear}/scan", qos_profile_sensor_data)
             for ear in self.frames
         }
+        self.point_publishers = {
+            ear: node.create_publisher(PointCloud2, f"/{ear}/points", qos_profile_sensor_data)
+            for ear in self.frames
+        }
         self.joint_publisher = node.create_publisher(JointState, "/joint_states", 10)
         self._rx_buffer = bytearray()
         self._last_scan_ns = {}
@@ -113,6 +123,22 @@ class Ears:
         self._position_timeout_ns = 500_000_000
         self._joint_timer = node.create_timer(0.1, self._publish_cached_positions)
         self.following = False
+        self.poll_period = float(param("poll_period"))
+        self.poll_timeout = float(param("poll_timeout"))
+        if self.poll_period < 0.1 or self.poll_timeout <= self.poll_period:
+            raise ValueError("Require poll_period >= 0.1 and poll_timeout > poll_period")
+        self._seq = 0
+        self._pending_seq = None
+        self._pending_since_ns = None
+        self._last_poll_ns = 0
+        self._cycle_received = set()
+        self._last_warning_ns = 0
+        self._completed = 0
+        self._timeouts = 0
+        self._invalid = {"l_ear": 0, "r_ear": 0}
+        self._ranges = {"l_ear": 0, "r_ear": 0}
+        self._last_stats_ns = time.monotonic_ns()
+        self._stats_timer = node.create_timer(10.0, self._log_stats)
         self.ser = None
         try:
             self.ser = serial.Serial(
@@ -123,15 +149,16 @@ class Ears:
         except (serial.SerialException, OSError) as exc:
             node.get_logger().error(f"Failed to connect to ears: {exc}")
         self._serial_read_timer = node.create_timer(0.02, self._read_serial)
+        self._poll_timer = node.create_timer(0.05, self._poll_if_ready)
 
     def _write(self, command):
         if self.ser is None or not self.ser.is_open:
             raise RuntimeError("Ears serial port is unavailable; check connection and restart node")
-        payload = (command + "();\n").encode("ascii")
+        payload = (command + "\n").encode("ascii")
         written = self.ser.write(payload)
         if written != len(payload):
             raise RuntimeError("Incomplete ears serial write")
-        self.node.get_logger().debug(f"Ears TX: {command}()")
+        self.node.get_logger().debug(f"Ears TX: {command}")
 
     def stop(self):
         self.following = False
@@ -148,6 +175,37 @@ class Ears:
     def think(self):
         self.following = False
         self._write("think")
+
+    def _poll_if_ready(self):
+        if self.ser is None or not self.ser.is_open:
+            return
+        now_ns = time.monotonic_ns()
+        if self._pending_seq is not None:
+            if now_ns - self._pending_since_ns < int(self.poll_timeout * 1e9):
+                return  # Only ONE in-flight request at a time.
+            # Drop the stale cycle, rather than accumulate new requests.
+            if now_ns - self._last_warning_ns > 5_000_000_000:
+                self.node.get_logger().warning(
+                    f"Ear poll {self._pending_seq} timed out; discarding late data")
+                self._last_warning_ns = now_ns
+            self._timeouts += 1
+            self._pending_seq = None
+        if now_ns - self._last_poll_ns < int(self.poll_period * 1e9):
+            return
+        self._seq = (self._seq + 1) % 1000000
+        payload = f"read:{self._seq}\n".encode("ascii")
+        try:
+            sent = self.ser.write(payload)
+            if sent != len(payload):
+                raise serial.SerialTimeoutException("Partial ear poll write")
+        except (serial.SerialException, OSError) as exc:
+            self.node.get_logger().warning(f"Ear poll write failed: {exc}")
+            self._last_poll_ns = now_ns
+            return
+        self._pending_seq = self._seq
+        self._pending_since_ns = now_ns
+        self._last_poll_ns = now_ns
+        self._cycle_received.clear()
 
     def _read_serial(self):
         if self.ser is None or not self.ser.is_open:
@@ -173,10 +231,11 @@ class Ears:
     def _publish_cached_positions(self):
         """Continue ear TF updates only while genuine position feedback is fresh."""
         now = self.node.get_clock().now()
+        now_mono_ns = time.monotonic_ns()
         names, positions = [], []
         for ear in ("l_ear", "r_ear"):
             seen = self._last_position_ns.get(ear)
-            if seen is not None and 0 <= now.nanoseconds - seen <= self._position_timeout_ns:
+            if seen is not None and 0 <= now_mono_ns - seen <= self._position_timeout_ns:
                 names.append(self.joints[ear])
                 positions.append(self._last_positions[ear])
         if not names:
@@ -194,10 +253,21 @@ class Ears:
             return
         try:
             reading = json.loads(text[start:])
-            if not isinstance(reading, dict) or reading.get("type") not in ("LIDAR", "POSITION"):
+            if not isinstance(reading, dict):
+                return
+            kind = reading.get("type")
+            # A cycle ends only on its matching DONE. Ignore stray/old replies.
+            if kind == "DONE":
+                if self._pending_seq is not None and reading.get("seq") == self._pending_seq:
+                    self._completed += 1
+                    self._pending_seq = None
+                return
+            if kind not in ("LIDAR", "POSITION"):
+                return
+            if self._pending_seq is None or reading.get("seq") != self._pending_seq:
                 return
             ear = reading.get("sensor")
-            if ear not in self.frames:
+            if ear not in self.frames or ear in self._cycle_received:
                 return
             angle = float(reading["angle"])
             if not math.isfinite(angle):
@@ -213,8 +283,9 @@ class Ears:
 
         now = self.node.get_clock().now()
         stamp = now.to_msg()
+        self._cycle_received.add(ear)
         self._last_positions[ear] = position
-        self._last_position_ns[ear] = now.nanoseconds
+        self._last_position_ns[ear] = time.monotonic_ns()
 
         # Immediately update TF for this actual reading (especially while sweeping).
         joint = JointState()
@@ -224,6 +295,7 @@ class Ears:
         self.joint_publisher.publish(joint)
 
         if reading["type"] != "LIDAR":
+            self._invalid[ear] += 1
             return
 
         try:
@@ -231,15 +303,20 @@ class Ears:
         except (ValueError, TypeError, KeyError):
             return
         if not math.isfinite(distance) or not self.range_min <= distance <= self.range_max:
+            self._invalid[ear] += 1
             return
+        self._ranges[ear] += 1
 
         scan = LaserScan()
         scan.header.stamp = stamp  # Host receipt time; firmware has no timestamp.
         scan.header.frame_id = self.frames[ear]
         # One ToF measurement along the ear sensor frame's local +X direction.
-        scan.angle_min = 0.0
-        scan.angle_max = 0.0
-        scan.angle_increment = 0.0
+        # Retain the three-ray RViz compatibility workaround until the
+        # LaserScan consumers can be migrated to the single-point clouds.
+        # Do not interpret the duplicates as independent measurements.
+        scan.angle_min = -0.001
+        scan.angle_max = 0.001
+        scan.angle_increment = 0.001
         scan.time_increment = 0.0
         previous = self._last_scan_ns.get(ear)
         if previous is not None and now.nanoseconds > previous:
@@ -247,10 +324,41 @@ class Ears:
         self._last_scan_ns[ear] = now.nanoseconds
         scan.range_min = self.range_min
         scan.range_max = self.range_max
-        scan.ranges = [distance]
+        scan.ranges = [distance, distance, distance]
         self.scan_publishers[ear].publish(scan)
 
+        # One actual VL53L0X return: a single XYZ point in the moving
+        # sensor's local frame. TF rotates and translates it into base_link.
+        cloud = PointCloud2()
+        cloud.header.stamp = stamp
+        cloud.header.frame_id = self.frames[ear]
+        cloud.height = 1
+        cloud.width = 1
+        cloud.fields = [
+            PointField(name="x", offset=0, datatype=PointField.FLOAT32, count=1),
+            PointField(name="y", offset=4, datatype=PointField.FLOAT32, count=1),
+            PointField(name="z", offset=8, datatype=PointField.FLOAT32, count=1),
+        ]
+        cloud.is_bigendian = False
+        cloud.point_step = 12
+        cloud.row_step = 12
+        cloud.is_dense = True
+        cloud.data = struct.pack("<fff", distance, 0.0, 0.0)
+        self.point_publishers[ear].publish(cloud)
+
+    def _log_stats(self):
+        self.node.get_logger().info(
+            "Ear polls: completed=%d timed_out=%d valid_ranges(L/R)=%d/%d "
+            "position_only_or_invalid(L/R)=%d/%d pending=%s"
+            % (self._completed, self._timeouts,
+               self._ranges["l_ear"], self._ranges["r_ear"],
+               self._invalid["l_ear"], self._invalid["r_ear"],
+               str(self._pending_seq))
+        )
+
     def close(self):
+        self._stats_timer.cancel()
+        self._poll_timer.cancel()
         self._joint_timer.cancel()
         self._serial_read_timer.cancel()
         if self.ser is not None and self.ser.is_open:

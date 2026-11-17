@@ -1,14 +1,17 @@
 /*
-K9 Espruino rotating ears — continuous sensing, independent movement.
+K9 Espruino rotating ears — bounded on-demand measurements and independent movement.
 Based on the original ears.js (Richard Hopkins, 7 February 2021).
 Published under The Unlicense.
 
 USB JSON:
-  {"type":"LIDAR","sensor":"l_ear","distance":0.6,"angle":0.2}
-  {"type":"POSITION","sensor":"l_ear","angle":0.2} // invalid/no range
+  {"type":"LIDAR","sensor":"l_ear","distance":0.6,"angle":0.2,"seq":7}
+  {"type":"POSITION","sensor":"l_ear","angle":0.2,"seq":7} // no valid range
+  {"type":"DONE","seq":7}
+Pi sends read:<sequence_number>\n; max one reading pair is produced per request.
 
 Movement commands: follow(), stop(), scan(), fast(), think().
-Every mode keeps both ToF sensors active. stop() returns servos to neutral.
+All modes allow sensing requests. No periodic sensor-output timer or unbounded queue.
+stop() returns servos to neutral; scan(), fast(), think() only change movement.
 */
 
 var PWM_l = 0.15;
@@ -30,11 +33,11 @@ var vRef = E.getAnalogVRef();
 var num_readings = 1;
 var transmit = false;
 var move_callback;
-var lidar_callback;
 var vref_callback;
 var boot_callback;
 var command_buffer = "";
-var SENSE_PERIOD_MS = 100; // 10 samples/second per ear, subject to sensor latency
+var measuring = false;
+var last_seq = -1;
 var step_lookup = [];
 
 function setServo(pin, pos) {
@@ -62,12 +65,12 @@ function refine_vRef() {
   vRef = (vRef * (num_readings - 1) + reading) / num_readings;
 }
 
-// USB is a dedicated ROS serial protocol after startup, not a JS console.
-// Accept the existing newline-terminated strings from ears.py. Never eval input.
+// USB is a dedicated ROS protocol, NOT a JavaScript console.
+// Commands are newline-delimited and are never eval()ed.
 function onUsbData(data) {
   command_buffer += data;
   if (command_buffer.length > 256) {
-    command_buffer = "";
+    command_buffer = ""; // Discard malformed input; never grow without bound.
     return;
   }
   var newline;
@@ -79,6 +82,17 @@ function onUsbData(data) {
     else if (cmd === "think();" || cmd === "think()" || cmd === "think") think();
     else if (cmd === "stop();" || cmd === "stop()" || cmd === "stop") stop();
     else if (cmd === "follow();" || cmd === "follow()" || cmd === "follow") follow();
+    else if (cmd.slice(0, 5) === "read:") {
+      var token = cmd.slice(5);
+      // No unbounded queue: ignore requests if we're already taking readings.
+      if (token.length >= 1 && token.length <=6 && /^[0-9]+$/.test(token) && !measuring) {
+        var seq = parseInt(token, 10);
+        // Do the measurements in the next event-loop turn. Commands remain
+        // independent of the 20-75Hz servo movement timer.
+        measuring = true;
+        setTimeout(function() { takeReading(seq); }, 0);
+      }
+    }
   }
 }
 
@@ -89,8 +103,7 @@ function switchConsole() {
   command_buffer = "";
   USB.on("data", onUsbData);
   transmit = true;
-  startSensing();
-  stop(); // Neutral ear position, with sensing still running.
+  stop(); // Neutral at startup. Readings are produced only when requested.
 }
 
 function follow() { setMovement(0); }
@@ -102,14 +115,13 @@ function think()  { setMovement(50); }
 function onInit() {
   // Stop only timers owned by this script, so repeated onInit is predictable.
   if (move_callback) clearInterval(move_callback);
-  if (lidar_callback) clearInterval(lidar_callback);
   if (vref_callback) clearInterval(vref_callback);
   if (boot_callback) clearTimeout(boot_callback);
   move_callback = undefined;
-  lidar_callback = undefined;
   vref_callback = undefined;
 
   transmit = false;
+  measuring = false;
   command_buffer = "";
   USB.setup(115200, {bytesize:8, stopbits:1});
   initHW();
@@ -143,36 +155,39 @@ function volts2angle(volts, ear) {
   return angle * MAX_ANG;
 }
 
-function takeReading() {
-  takeEarReading(LIDAR_l, PIN_pot_l, "l_ear");
-  takeEarReading(LIDAR_r, PIN_pot_r, "r_ear");
+// Only one poll is permitted at a time. Two readings plus one DONE, no backlog.
+// Each measurement is synchronous on this Espruino API; polling is deliberately
+// limited by the Pi to reduce event-loop and USB pressure.
+function takeReading(seq) {
+  try {
+    takeEarReading(LIDAR_l, PIN_pot_l, "l_ear", seq);
+    takeEarReading(LIDAR_r, PIN_pot_r, "r_ear", seq);
+    sendMsg({type:"DONE", seq:seq});
+  } finally {
+    measuring = false;
+  }
 }
 
-function takeEarReading(read_lidar, read_pin, ear) {
+function takeEarReading(read_lidar, read_pin, ear, seq) {
   var volts, angle, dist;
   try {
     volts = analogRead(read_pin) * vRef;
     angle = volts2angle(volts, ear);
-    // Keep the joint position current even if ranging fails.
     if (!isFinite(angle)) return;
   } catch (e) {
-    return; // No reliable joint position.
+    return;
   }
-
   try {
     dist = read_lidar.performSingleMeasurement().distance;
-    // Preserve original VL53L0X valid measurement envelope (millimetres).
     if (isFinite(dist) && dist > 20 && dist < 8000) {
-      sendMsg({
-        type:"LIDAR", sensor:ear,
-        distance:dist / 1000, angle:angle
-      });
+      sendMsg({type:"LIDAR", sensor:ear, distance:dist/1000,
+               angle:angle, seq:seq});
       return;
     }
   } catch (e) {
-    // Report measured potentiometer angle without inventing a distance.
+    // A failed range measurement is not free space.
   }
-  sendMsg({type:"POSITION", sensor:ear, angle:angle});
+  sendMsg({type:"POSITION", sensor:ear, angle:angle, seq:seq});
 }
 
 function moveEars() {
@@ -204,12 +219,7 @@ function setMovement(freq) {
   } else {
     resetEars();
   }
-  // Intentionally do not alter lidar_callback here.
-}
-
-function startSensing() {
-  if (lidar_callback) clearInterval(lidar_callback);
-  lidar_callback = setInterval(takeReading, SENSE_PERIOD_MS);
+  // Sensing is separately requested by the Pi; no sensor timer to alter.
 }
 
 for (var i = 0; i <= num_steps; i++) {
