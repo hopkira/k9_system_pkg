@@ -214,6 +214,7 @@ class BackLightsNode(Node):
                 stopbits=serial.STOPBITS_ONE,
                 bytesize=serial.EIGHTBITS,
                 timeout=serial_timeout,
+                write_timeout=0.25,
             )
 
             self.get_logger().info(
@@ -358,11 +359,8 @@ class BackLightsNode(Node):
             name="back_panel_switch_poll",
             daemon=True,
         )
-        self._switch_thread.start()
-
-        # Start with a deterministic presentation. Once the authoritative
-        # /audio/effective_state arrives, the display will be updated.
         self.render()
+        self._switch_thread.start()
 
         self.get_logger().info(
             "Back Lights Node is running: "

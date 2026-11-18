@@ -189,6 +189,28 @@ def launch_nodes(context):
             'localization.launch.py',
         )
 
+
+        # Jetson owns local obstacle mapping.
+        if LaunchConfiguration(
+                'enable_local_costmap'
+        ).perform(context).lower() in (
+                'true', '1', 'yes', 'on'):
+
+            costmap_launch = os.path.join(
+                get_package_share_directory('k9_ros2_nav'),
+                'launch',
+                'local_costmap.launch.py',
+            )
+
+            nodes.append(
+                IncludeLaunchDescription(
+                    PythonLaunchDescriptionSource(
+                        costmap_launch
+                    )
+                )
+            )
+
+
         nodes.append(
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(
@@ -204,8 +226,8 @@ def launch_nodes(context):
             os.path.join(get_package_share_directory('k9_ros2_nav'),
                          'launch', 'ld06.launch.py'))))
 
-    # OAK hardware and processing stay on the Pi; isolate driver launch arguments.
-    if platform in ('pi', 'all') and LaunchConfiguration(
+    # Jetson owns the OAK-D Lite and its depth/point-cloud processing.
+    if platform in ('jetson', 'all') and LaunchConfiguration(
             'enable_oak').perform(context).lower() in ('true', '1', 'yes', 'on'):
         oak_share = os.path.join(get_package_share_directory('k9_ros2_nav'), 'oak')
         oak_actions = [IncludeLaunchDescription(PythonLaunchDescriptionSource(
@@ -507,10 +529,10 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument(
             'enable_oak', default_value='true',
-            description='Launch OAK camera and processing on Pi/all; false skips both'),
+            description='Launch OAK camera and processing on Jetson/all; false skips both'),
         DeclareLaunchArgument(
             'enable_oak_floor_filter', default_value='true',
-            description='Run floor filter with OAK on Pi/all; false keeps only raw cloud'),
+            description='Run floor filter with OAK on Jetson/all; false keeps only raw cloud'),
         DeclareLaunchArgument(
             'enable_ld06', default_value='true',
             description='Launch LD06 and 20 cm filter on Pi/all; disable if already running'),
@@ -522,7 +544,11 @@ def generate_launch_description():
             default_value='pi',
             description='K9 computer role: pi, jetson, commissioning or all',
         ),
-
+        DeclareLaunchArgument(
+            'enable_local_costmap',
+            default_value='true',
+            description='Start the Jetson local obstacle costmap',
+        ),
         DeclareLaunchArgument(
             'drive_dry_run', default_value='auto',
             description='auto: dry-run for commissioning, physical hardware for normal Pi; or true/false'),
