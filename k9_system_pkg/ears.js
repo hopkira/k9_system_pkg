@@ -158,6 +158,7 @@ function volts2angle(volts, ear) {
 // Only one poll is permitted at a time. Two readings plus one DONE, no backlog.
 // Each measurement is synchronous on this Espruino API; polling is deliberately
 // limited by the Pi to reduce event-loop and USB pressure.
+
 function takeReading(seq) {
   try {
     takeEarReading(LIDAR_l, PIN_pot_l, "l_ear", seq);
