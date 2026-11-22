@@ -226,6 +226,30 @@ def launch_nodes(context):
             os.path.join(get_package_share_directory('k9_ros2_nav'),
                          'launch', 'ld06.launch.py'))))
 
+    # ------------------------------------------------------------------
+    # Cliff detection - Raspberry Pi hardware only.
+    #
+    # Include the cliff package's own launch file so that its existing
+    # sensor configuration and calibration remain centrally managed.
+    # ------------------------------------------------------------------
+
+    if platform in ('pi', 'all') and LaunchConfiguration(
+            'enable_cliff').perform(context).lower() in ('true', '1', 'yes', 'on'):
+
+        cliff_launch = os.path.join(
+            get_package_share_directory('k9_cliff_pkg'),
+            'launch',
+            'cliff.launch.py',
+        )
+
+        nodes.append(
+            IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(
+                    cliff_launch
+                )
+            )
+        )
+
     # Jetson owns the OAK-D Lite and its depth/point-cloud processing.
     if platform in ('jetson', 'all') and LaunchConfiguration(
             'enable_oak').perform(context).lower() in ('true', '1', 'yes', 'on'):
@@ -536,6 +560,10 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'enable_ld06', default_value='true',
             description='Launch LD06 and 20 cm filter on Pi/all; disable if already running'),
+        DeclareLaunchArgument(
+            'enable_cliff',
+            default_value='true',
+            description='Launch cliff detection on Pi/all; false skips cliff sensors'),
         DeclareLaunchArgument(
             'enable_robot_description', default_value='true',
             description='Publish shared robot description on Pi/all/commissioning'),
